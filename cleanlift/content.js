@@ -362,6 +362,17 @@
     return s.replace(/\|/g, '\\|').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
   }
 
+  function rowAllBold(tr) {
+    const cells = Array.from(tr.children).filter(c => c.tagName === 'TD' || c.tagName === 'TH');
+    if (!cells.length) return false;
+    return cells.every(c => {
+      if (c.tagName === 'TH') return true;
+      const onlyBold = c.querySelector('strong, b');
+      const text = (c.textContent || '').trim();
+      return !!onlyBold && (onlyBold.textContent || '').trim() === text;
+    });
+  }
+
   function tableToMarkdown(table) {
     const rows = Array.from(table.querySelectorAll('tr'));
     if (!rows.length) return '';
@@ -380,8 +391,16 @@
     if (grid[0].some(c => c.header)) {
       headerRow = grid[0];
       bodyRows = grid.slice(1);
+    } else if (rows[0] && rowAllBold(rows[0])) {
+      // First row is visually-bold-only — promote to header (common pattern
+      // in commercial training-page fee tables that omit <th>).
+      headerRow = grid[0];
+      bodyRows = grid.slice(1);
     } else {
-      headerRow = Array(colCount).fill(0).map((_, i) => ({ text: 'Column ' + (i + 1), header: true }));
+      // No reliable header signal. Emit a header-less markdown table
+      // (empty header cells) rather than fake "Column 1, Column 2" labels
+      // that hijack downstream LLM field detection.
+      headerRow = Array(colCount).fill(0).map(() => ({ text: '', header: true }));
       bodyRows = grid;
     }
 
@@ -432,7 +451,26 @@
           }
         }
       }
-      return s.replace(/\s+/g, ' ').trim();
+      // Preserve newlines from <br> while collapsing horizontal whitespace.
+      // Multi-line fee blocks (`<p>UK: £12,500<br>EU: £18,000</p>`) keep their
+      // structure in JSON output instead of merging into one space-joined run.
+      return s
+        .replace(/[ \t\f\v ]+/g, ' ')
+        .replace(/[ \t]*\n[ \t]*/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    }
+
+    function isInlineOnlyContainer(el) {
+      const INLINE_OK = new Set(['A', 'STRONG', 'B', 'EM', 'I', 'CODE', 'KBD',
+        'SUB', 'SUP', 'SMALL', 'MARK', 'TIME', 'ABBR', 'CITE', 'Q', 'U', 'S',
+        'BR', 'SPAN', 'BDI', 'BDO', 'WBR']);
+      for (const child of el.childNodes) {
+        if (child.nodeType === Node.ELEMENT_NODE && !INLINE_OK.has(child.tagName)) {
+          return false;
+        }
+      }
+      return true;
     }
 
     function listToEntry(list) {
@@ -475,22 +513,41 @@
       if (grid[0].some(c => c.header)) {
         headers = grid[0].map(c => c.text);
         body = grid.slice(1).map(r => r.map(c => c.text));
+      } else if (rows[0] && rowAllBold(rows[0])) {
+        headers = grid[0].map(c => c.text);
+        body = grid.slice(1).map(r => r.map(c => c.text));
       } else {
-        headers = Array(colCount).fill('').map((_, i) => 'Column ' + (i + 1));
+        // No reliable header signal. JSON consumers should treat headers=null
+        // as "use row position", not as fake column labels.
+        headers = null;
         body = grid.map(r => r.map(c => c.text));
       }
       return { type: 'table', headers, rows: body };
     }
 
     function dlEntry(dl) {
+      // Walk DT/DD in document order. Squarespace/Webflow templates wrap each
+      // pair in a single styling <div>, so we accept dt/dd nested up to one
+      // wrapper deep. Orphan DDs (before the first DT, or with no DT at all)
+      // are emitted under a synthetic empty term so content survives.
       const items = [];
       let term = null;
-      for (const child of dl.children) {
-        if (child.tagName === 'DT') {
+      const all = Array.from(dl.querySelectorAll('dt, dd')).filter(el => {
+        let p = el.parentElement;
+        while (p) {
+          if (p === dl) return true;
+          if (p.tagName === 'DL') return false;
+          p = p.parentElement;
+        }
+        return false;
+      });
+      for (const el of all) {
+        if (el.tagName === 'DT') {
           if (term) items.push(term);
-          term = { term: inlineText(child), descriptions: [] };
-        } else if (child.tagName === 'DD' && term) {
-          term.descriptions.push(inlineText(child));
+          term = { term: inlineText(el), descriptions: [] };
+        } else {
+          if (!term) term = { term: '', descriptions: [] };
+          term.descriptions.push(inlineText(el));
         }
       }
       if (term) items.push(term);
@@ -558,8 +615,11 @@
           const text = inlineText(summary);
           if (text) out.push({ type: 'heading', level: 4, text });
         }
-        for (const child of node.children) {
-          if (child.tagName !== 'SUMMARY') visit(child);
+        // Iterate childNodes (not children) so text nodes directly inside
+        // <details>...</details> are preserved alongside element children.
+        for (const child of node.childNodes) {
+          if (child.nodeType === Node.ELEMENT_NODE && child.tagName === 'SUMMARY') continue;
+          visit(child);
         }
         return;
       }
@@ -573,7 +633,16 @@
       }
       if (tag === 'BR') return;
 
-      // Container: recurse children
+      // Inline-only container (DIV/SPAN/etc. with no block descendants):
+      // emit a single paragraph instead of fragmenting into N entries. This
+      // restores parity with Turndown's markdown output.
+      if (isInlineOnlyContainer(node)) {
+        const text = collectInline(node);
+        if (text) out.push({ type: 'paragraph', text });
+        return;
+      }
+
+      // Mixed-content container: recurse children
       for (const child of node.childNodes) visit(child);
     }
 
