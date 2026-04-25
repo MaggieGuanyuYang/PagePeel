@@ -10,29 +10,62 @@
 
   const STRIP_ARIA_ROLES = ['navigation', 'banner', 'contentinfo'];
 
-  // Distinctive whole-token signatures (matched against full class names like
-  // "site-footer", "trust-badges"). A single hit is enough to strip the element.
-  const STRONG_PATTERNS = new Set([
-    'navbar', 'sidebar', 'breadcrumb', 'breadcrumbs',
-    'site-footer', 'page-footer', 'sitefooter',
-    'site-header', 'page-header', 'topbar', 'top-bar', 'top-nav',
+  // Strong root tokens. A class is treated as page chrome when its whole-token
+  // form (a) equals one of these, or (b) starts with one of these followed by
+  // a `-`/`_` separator. Underscores are normalised to hyphens before matching
+  // so `cookie_wrap` aligns with the same root as `cookie-wrap`.
+  //
+  // Prefix-only on purpose: chrome-named compound classes generally LEAD with
+  // the chrome word (cookie-banner, site-footer, navbar-collapse). Suffix-
+  // position matches like Bootstrap's "card-header" are NOT chrome and must
+  // survive — that's the bug discovered on the MRS event-page sidebar where
+  // `event_side_nav` was wrongly stripped by a single weak `nav` hit.
+  const STRONG_ROOTS = new Set([
+    // Page chrome — single tokens
+    'nav', 'navbar', 'navigation',
+    'header', 'footer', 'menu',
+    'sidebar', 'breadcrumb', 'breadcrumbs',
+    // Cookie / consent / privacy
+    'cookie', 'cookies', 'consent', 'gdpr', 'privacy',
     'cookie-banner', 'cookie-notice', 'cookie-consent', 'consent-banner',
-    'gdpr', 'privacy-banner', 'privacy-notice',
-    'advert', 'adverts', 'advertisement', 'advertising',
+    'privacy-banner', 'privacy-notice',
+    // Newsletters / mailing
+    'newsletter', 'newsletter-signup', 'mailing-list', 'mailchimp',
+    'signup', 'subscribe',
+    // Sharing / social
+    'share', 'social', 'sharing',
     'social-share', 'sharing-buttons', 'share-buttons', 'social-icons',
-    'comment-section', 'disqus', 'commentlist',
+    // Comments / discussion widgets
+    'comments', 'comment-section', 'commentlist', 'disqus',
+    // Related / recommended / cross-sell
+    'related', 'recommended', 'similar',
     'related-posts', 'related-articles', 'related-courses', 'related-content',
     'recommended-posts', 'also-bought', 'also-like', 'you-may-like', 'youmaylike',
-    'testimonial', 'testimonials', 'review-widget', 'trust-pilot', 'trustpilot', 'trust-badges',
-    'newsletter', 'newsletter-signup', 'mailing-list', 'mailchimp',
+    // Testimonials / trust badges
+    'testimonial', 'testimonials', 'review-widget',
+    'trust-pilot', 'trustpilot', 'trust-badges',
+    // Ads / sponsorships / promo
+    'ad', 'ads', 'advert', 'adverts', 'advertisement', 'advertising',
+    'sponsor', 'sponsored', 'promo',
+    // Modals / overlays / popups
+    'modal', 'overlay', 'popup',
     'dialog-backdrop', 'lightbox',
-    'live-chat', 'chatbot', 'chat-widget', 'intercom-launcher', 'zopim', 'tawk',
-    'skip-link', 'skip-to-content', 'skip-nav'
+    // Live-chat / chatbots
+    'live-chat', 'chatbot', 'chat-widget',
+    'intercom-launcher', 'zopim', 'tawk',
+    // Skip links
+    'skip-link', 'skip-to-content', 'skip-nav',
+    // Site templates' chrome wrappers
+    'site-footer', 'site-header', 'page-footer', 'page-header',
+    'sitefooter', 'topbar', 'top-bar', 'top-nav',
+    // News tickers / announcement bars
+    'news-ticker'
   ]);
 
-  // Ambiguous token fragments. Outside of <article>/<main>, a single match
-  // strips. Inside content regions, require ≥2 matches OR a STRONG hit so that
-  // a Bootstrap "card-header" or LearnDash "course-promo" doesn't lose content.
+  // Ambiguous token fragments. A single occurrence is NOT sufficient to strip
+  // — that was the rule that killed `event_side_nav` (containing the fee
+  // table) on MRS pages with no <main>/<article> landmark. Two or more weak
+  // hits in the same element's tokens are required.
   const WEAK_TOKENS = new Set([
     'nav', 'navigation', 'menu',
     'header', 'footer',
@@ -44,6 +77,19 @@
     'signup', 'subscribe',
     'modal', 'popup', 'overlay'
   ]);
+
+  function tokenMatchesStrong(token, strongRoots) {
+    const norm = token.indexOf('_') >= 0 ? token.replace(/_/g, '-') : token;
+    if (strongRoots.has(norm)) return true;
+    for (const root of strongRoots) {
+      if (norm.length > root.length + 1 &&
+          norm.charCodeAt(root.length) === 45 /* '-' */ &&
+          norm.startsWith(root)) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   const ALLOWLIST_TAGS = new Set(['MAIN', 'ARTICLE', 'SECTION', 'BODY', 'HTML']);
 
@@ -91,15 +137,14 @@
   }
 
   function buildBoilerplatePatterns(extra) {
-    const strong = new Set(STRONG_PATTERNS);
+    const strong = new Set(STRONG_ROOTS);
     const weak = new Set(WEAK_TOKENS);
     if (extra && extra.length) {
       for (const raw of extra) {
         const lc = String(raw).toLowerCase().trim();
         if (!lc) continue;
-        // Custom patterns are treated as strong by default — the user opted
-        // into them per-site, so we trust their precision.
-        strong.add(lc);
+        // Custom patterns are treated as strong roots — the user opted in.
+        strong.add(lc.replace(/_/g, '-'));
       }
     }
     return { strong, weak };
@@ -137,18 +182,20 @@
 
     let strongHit = false;
     for (const t of wholeTokens) {
-      if (patterns.strong.has(t)) { strongHit = true; break; }
+      if (tokenMatchesStrong(t, patterns.strong)) { strongHit = true; break; }
     }
     if (strongHit) return true;
 
+    // Weak rule: require at least TWO weak-token hits in the same element's
+    // tokens. The previous "1 hit suffices outside <article>/<main>" rule
+    // produced silent content loss on sites without semantic landmarks (e.g.
+    // MRS event pages, Drupal/T4 university templates) where a real content
+    // sidebar with a single `nav` token in its class would be stripped.
     let weakCount = 0;
     for (const t of splitTokens) {
       if (patterns.weak.has(t)) weakCount++;
     }
-    if (!weakCount) return false;
-
-    const insideContent = el.closest && el.closest('article, main');
-    return insideContent ? weakCount >= 2 : weakCount >= 1;
+    return weakCount >= 2;
   }
 
   function promoteHeadingLikeElements(clone) {
