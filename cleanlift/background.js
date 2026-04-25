@@ -99,16 +99,52 @@ async function handleShortcut() {
     return;
   }
 
-  if (settings.outputFormat === 'json') {
-    await downloadText(result.json, result.filenameJson, 'application/json');
-  } else if (settings.outputFormat === 'both') {
-    await downloadText(result.markdown, result.filenameMd, 'text/markdown');
-    await downloadText(result.json, result.filenameJson, 'application/json');
-  } else {
-    await downloadText(result.markdown, result.filenameMd, 'text/markdown');
+  // Fail-closed: skip the download for whichever format produced no payload.
+  // Mirror the warning state on the badge so the user sees something is off
+  // without having to open the popup.
+  let wroteAny = false;
+  if (settings.outputFormat === 'json' || settings.outputFormat === 'both') {
+    if (result.json) {
+      await downloadText(result.json, result.filenameJson, 'application/json');
+      wroteAny = true;
+    }
+  }
+  if (settings.outputFormat === 'markdown' || settings.outputFormat === 'both') {
+    if (result.markdown) {
+      await downloadText(result.markdown, result.filenameMd, 'text/markdown');
+      wroteAny = true;
+    }
   }
 
-  await setBadge(tab.id, result.meta.tokenBadge);
+  const hasWarning = (result.meta.warnings || []).length > 0
+    || (result.meta.readyState && result.meta.readyState !== 'complete')
+    || result.meta.lazyAccordionsSuspected;
+
+  if (!wroteAny) {
+    await setBadgeError(tab.id, 'ERR');
+    return;
+  }
+
+  if (hasWarning) {
+    // Amber badge so the user knows to open the popup before trusting the file.
+    await setBadgeWarn(tab.id, result.meta.tokenBadge || '!');
+  } else {
+    await setBadge(tab.id, result.meta.tokenBadge);
+  }
+}
+
+async function setBadgeError(tabId, text) {
+  try {
+    await chrome.action.setBadgeBackgroundColor({ color: '#B91C1C', tabId });
+    await chrome.action.setBadgeText({ text: text || 'ERR', tabId });
+  } catch (_e) {}
+}
+
+async function setBadgeWarn(tabId, text) {
+  try {
+    await chrome.action.setBadgeBackgroundColor({ color: '#D97706', tabId });
+    await chrome.action.setBadgeText({ text: text || '!', tabId });
+  } catch (_e) {}
 }
 
 chrome.commands.onCommand.addListener((command) => {

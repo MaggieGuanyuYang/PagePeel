@@ -163,27 +163,40 @@ async function init() {
 
   extracted = { ...result, tabId: tab.id };
 
-  setStatus('ok', 'Ready.');
+  const warnings = [];
+  let statusState = 'ok';
+  let statusText = 'Ready.';
+
+  if (result.meta.readyState && result.meta.readyState !== 'complete') {
+    statusState = 'warn';
+    statusText = 'Page still loading.';
+    warnings.push('The page reports readyState=' + result.meta.readyState + '. Some content may not be in the DOM yet — wait for full load and re-extract.');
+  }
+  if (result.meta.lazyAccordionsSuspected) {
+    if (statusState === 'ok') { statusState = 'warn'; statusText = 'Collapsed sections detected.'; }
+    warnings.push('This page has collapsed accordions/details. Expand them in the page before re-extracting if their content is missing.');
+  }
+  if (Array.isArray(result.meta.warnings)) {
+    for (const w of result.meta.warnings) warnings.push(w.message || String(w));
+    if (result.meta.warnings.some(w => w.kind === 'markdown-error' || w.kind === 'json-error')) {
+      statusState = 'warn';
+      statusText = 'Extraction had errors.';
+    }
+  }
+
+  setStatus(statusState, statusText);
   els.meta.hidden = false;
   els.words.textContent = formatNumber(result.meta.wordCount);
   els.chars.textContent = formatNumber(result.meta.charCount);
   els.tokens.textContent = '~' + formatTokens(result.meta.tokens);
-  els.preview.textContent = previewText(result.markdown);
-  els.btnMd.disabled = false;
-  els.btnJson.disabled = false;
-  els.btnCopy.disabled = false;
+  els.preview.textContent = result.markdown ? previewText(result.markdown) : '(markdown unavailable — see warning above)';
+  els.btnMd.disabled = !result.markdown;
+  els.btnJson.disabled = !result.json;
+  els.btnCopy.disabled = !result.markdown;
 
-  const warnings = [];
-  if (result.meta.readyState && result.meta.readyState !== 'complete') {
-    setStatus('warn', 'Page still loading.');
-    warnings.push('The page reports readyState=' + result.meta.readyState + '. Some content may not be in the DOM yet — wait for full load and re-extract.');
-  }
-  if (result.meta.lazyAccordionsSuspected) {
-    warnings.push('This page has many collapsed sections. Expand them in the page before re-extracting if their content is missing.');
-  }
   if (warnings.length) showWarning(warnings.join(' '));
 
-  await setBadge(tab.id, result.meta.tokenBadge);
+  await setBadge(tab.id, result.meta.tokenBadge || '');
 }
 
 els.btnMd.addEventListener('click', async () => {

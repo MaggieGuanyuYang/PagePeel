@@ -231,19 +231,33 @@
     return hidden;
   }
 
+  // Allowed protocols for <a href>. javascript:/vbscript:/file:/chrome-*: are
+  // dropped because the .md output is consumed by LLM pipelines and humans
+  // pasting into renderers — both can re-expose javascript: URLs as XSS.
+  const SAFE_LINK_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:', 'ftp:']);
+  // <img src> is more restrictive: data: and blob: can carry script payloads
+  // (SVG-with-script in particular). Allow only http(s).
+  const SAFE_IMG_PROTOCOLS = new Set(['http:', 'https:']);
+
   function resolveUrls(clone, baseURI) {
-    const fix = (el, attr) => {
+    const fixLink = (el, attr, allowed) => {
       const raw = el.getAttribute(attr);
       if (!raw) return;
+      let parsed;
       try {
-        const abs = new URL(raw, baseURI).href;
-        el.setAttribute(attr, abs);
+        parsed = new URL(raw, baseURI);
       } catch (_e) {
-        // leave as-is on failure
+        el.removeAttribute(attr);
+        return;
       }
+      if (!allowed.has(parsed.protocol)) {
+        el.removeAttribute(attr);
+        return;
+      }
+      el.setAttribute(attr, parsed.href);
     };
-    clone.querySelectorAll('a[href]').forEach(a => fix(a, 'href'));
-    clone.querySelectorAll('img[src]').forEach(img => fix(img, 'src'));
+    clone.querySelectorAll('a[href]').forEach(a => fixLink(a, 'href', SAFE_LINK_PROTOCOLS));
+    clone.querySelectorAll('img[src]').forEach(img => fixLink(img, 'src', SAFE_IMG_PROTOCOLS));
     clone.querySelectorAll('img[srcset]').forEach(img => img.removeAttribute('srcset'));
   }
 
@@ -650,8 +664,17 @@
     return out;
   }
 
+  // Windows refuses to open files whose stem matches a reserved device name,
+  // and bidi/zero-width characters can spoof filenames in shells. Both must
+  // be stripped before the page-controlled title becomes part of a filename.
+  const WIN_RESERVED_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+  // Bidi overrides (U+202A–U+202E), isolates (U+2066–U+2069), zero-width
+  // (U+200B–U+200F), BOM (U+FEFF).
+  const SPOOFY_CHARS_RE = /[‪-‮⁦-⁩​-‏﻿]/g;
+
   function safeTitle(s) {
     let out = (s || 'page')
+      .replace(SPOOFY_CHARS_RE, '')
       .replace(/[\\/:*?"<>|]/g, '')
       .replace(/\s+/g, '-');
     try {
@@ -659,10 +682,12 @@
     } catch (_e) {
       out = out.replace(/[^A-Za-z0-9._-]/g, '-');
     }
-    return out
+    out = out
       .replace(/-+/g, '-')
       .replace(/^[-.]+|[-.]+$/g, '')
       .slice(0, 80) || 'page';
+    if (WIN_RESERVED_RE.test(out)) out = '_' + out;
+    return out;
   }
 
   function applyFilenameTemplate(template, ctx) {
@@ -683,13 +708,25 @@
     return name + '.' + ext;
   }
 
+  // YAML single-quoted scalar: doubles internal apostrophes and strips control
+  // characters that would otherwise produce multi-line scalars or invalid YAML.
+  // Safer than JSON.stringify for downstream readers that aren't strict YAML
+  // (Stage-2 scripts that just split on first ':').
+  function yamlSingleQuote(s) {
+    const safe = String(s == null ? '' : s)
+      .replace(/[ -]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return "'" + safe.replace(/'/g, "''") + "'";
+  }
+
   function buildFrontmatter(meta) {
     const lines = [
       '---',
-      'url: ' + meta.url,
-      'domain: ' + meta.domain,
-      'title: ' + JSON.stringify(meta.title),
-      'extracted: ' + meta.timestamp,
+      'url: ' + yamlSingleQuote(meta.url),
+      'domain: ' + yamlSingleQuote(meta.domain),
+      'title: ' + yamlSingleQuote(meta.title),
+      'extracted: ' + yamlSingleQuote(meta.timestamp),
       'word_count: ' + meta.wordCount,
       '---',
       ''
@@ -697,8 +734,17 @@
     return lines.join('\n');
   }
 
-  function tokenEstimate(charCount) {
-    return Math.max(0, Math.round(charCount / 4));
+  // Token estimate uses words × 1.3 for plain prose (closer to BPE behaviour
+  // than chars/4) plus a small overhead for markdown syntax (link parens,
+  // table pipes, code fences). Still rough — accurate enough for badge/UI.
+  function tokenEstimate(markdown, wordCount) {
+    if (!markdown) return 0;
+    const baseTokens = Math.round(wordCount * 1.3);
+    // Count syntax overhead: links [text](url), table pipes, fence ticks.
+    const linkSyntax = (markdown.match(/\]\(/g) || []).length * 2;
+    const tableMarkers = (markdown.match(/\|/g) || []).length;
+    const codeFences = (markdown.match(/```/g) || []).length * 2;
+    return Math.max(0, baseTokens + linkSyntax + tableMarkers + codeFences);
   }
 
   function formatTokenBadge(tokens) {
@@ -837,21 +883,31 @@
     // Drop empties left over
     dropEmptyContainers(clone, isKept);
 
-    // Build outputs
+    // Build outputs. Markdown failure is reported via meta.markdownError
+    // and the markdown payload is left null so the popup/SW can refuse the
+    // download — previously a Turndown crash produced a "valid-looking"
+    // .md whose body was just the error message.
     const td = buildTurndown();
-    let markdown = '';
+    let markdown = null;
+    let markdownError = null;
     try {
-      markdown = td.turndown(clone);
+      const raw = td.turndown(clone);
+      markdown = raw.replace(/\n{3,}/g, '\n\n').trim() + '\n';
     } catch (e) {
-      markdown = '> Error converting to markdown: ' + (e && e.message ? e.message : String(e));
+      markdownError = e && e.message ? e.message : String(e);
     }
-    markdown = markdown.replace(/\n{3,}/g, '\n\n').trim() + '\n';
 
-    const json = buildJsonStructure(clone);
+    let json = null;
+    let jsonError = null;
+    try {
+      json = buildJsonStructure(clone);
+    } catch (e) {
+      jsonError = e && e.message ? e.message : String(e);
+    }
 
-    const wordCount = markdown.split(/\s+/).filter(Boolean).length;
-    const charCount = markdown.length;
-    const tokens = tokenEstimate(charCount);
+    const wordCount = markdown ? markdown.split(/\s+/).filter(Boolean).length : 0;
+    const charCount = markdown ? markdown.length : 0;
+    const tokens = tokenEstimate(markdown || '', wordCount);
 
     let domain = '';
     try { domain = new URL(location.href).hostname.replace(/^www\./, ''); } catch (_e) {}
@@ -867,6 +923,12 @@
         message: 'Custom strip selector ignored (invalid CSS): ' + invalidSelectors.join(', ')
       });
     }
+    if (markdownError) {
+      warnings.push({ kind: 'markdown-error', message: 'Markdown conversion failed: ' + markdownError });
+    }
+    if (jsonError) {
+      warnings.push({ kind: 'json-error', message: 'JSON build failed: ' + jsonError });
+    }
 
     const meta = {
       url: location.href,
@@ -880,31 +942,44 @@
       tokenBadge: formatTokenBadge(tokens),
       lazyAccordionsSuspected: checkLazyAccordions(document.body),
       readyState: document.readyState,
-      warnings
+      warnings,
+      markdownError,
+      jsonError
     };
 
-    let markdownOut = markdown;
-    if (settings.includeFrontmatter) {
-      markdownOut = buildFrontmatter(meta) + '\n' + markdown;
+    // Fail-closed: if BOTH outputs failed, return as a hard error so the
+    // shortcut path doesn't silently write garbage to disk.
+    if (markdownError && jsonError) {
+      return { error: 'Extraction produced no usable output. ' + markdownError, meta };
     }
 
-    const jsonOut = settings.includeFrontmatter
-      ? {
-          url: meta.url,
-          domain: meta.domain,
-          title: meta.title,
-          extracted: meta.timestamp,
-          word_count: meta.wordCount,
-          content: json
-        }
-      : { content: json };
+    let markdownOut = null;
+    if (markdown !== null) {
+      markdownOut = settings.includeFrontmatter
+        ? buildFrontmatter(meta) + '\n' + markdown
+        : markdown;
+    }
+
+    let jsonOut = null;
+    if (json !== null) {
+      jsonOut = settings.includeFrontmatter
+        ? {
+            url: meta.url,
+            domain: meta.domain,
+            title: meta.title,
+            extracted: meta.timestamp,
+            word_count: meta.wordCount,
+            content: json
+          }
+        : { content: json };
+    }
 
     const filenameMd = makeFilename(settings.filenameTemplate, 'md', meta);
     const filenameJson = makeFilename(settings.filenameTemplate, 'json', meta);
 
     return {
       markdown: markdownOut,
-      json: JSON.stringify(jsonOut, null, 2),
+      json: jsonOut !== null ? JSON.stringify(jsonOut, null, 2) : null,
       meta,
       filenameMd,
       filenameJson
