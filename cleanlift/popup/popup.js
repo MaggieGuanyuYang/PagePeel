@@ -5,6 +5,7 @@ const DEFAULT_SETTINGS = {
   includeImages: true,
   customStripSelectors: '',
   customKeepSelectors: '',
+  perDomainRules: '',
   filenameTemplate: '{title}_{domain}_{date}_{hash}'
 };
 
@@ -40,8 +41,46 @@ const els = {
   btnJson: $('btn-json'),
   btnCopy: $('btn-copy'),
   openOptions: $('open-options'),
-  shortcutLink: $('shortcut-link')
+  shortcutLink: $('shortcut-link'),
+  strippedDisclosure: $('stripped-disclosure'),
+  strippedList: $('stripped-list'),
+  strippedSummary: $('stripped-summary')
 };
+
+const STRIPPED_LABELS = {
+  hidden: 'Hidden elements',
+  tagsAlways: 'Scripts / iframes',
+  tagsOutsideContent: 'Header / footer / nav (outside article)',
+  ariaRoles: 'Navigation / banner / contentinfo roles',
+  patternMatched: 'Class/id boilerplate matches',
+  customSelectors: 'Custom strip selectors',
+  figures: 'Images / figures'
+};
+
+function renderStripped(stripped) {
+  if (!stripped || !els.strippedDisclosure) return;
+  const total = Object.values(stripped).reduce((a, b) => a + (b || 0), 0);
+  if (!total) {
+    els.strippedDisclosure.hidden = true;
+    return;
+  }
+  els.strippedDisclosure.hidden = false;
+  if (els.strippedSummary) els.strippedSummary.textContent = total + ' elements removed';
+  const list = els.strippedList;
+  if (!list) return;
+  list.textContent = '';
+  for (const key of Object.keys(STRIPPED_LABELS)) {
+    const n = stripped[key] || 0;
+    if (!n) continue;
+    const li = document.createElement('li');
+    const left = document.createElement('span');
+    left.textContent = STRIPPED_LABELS[key];
+    const right = document.createElement('span');
+    right.textContent = String(n);
+    li.append(left, right);
+    list.appendChild(li);
+  }
+}
 
 let extracted = null;
 
@@ -256,6 +295,7 @@ async function init() {
   clearActionTooltips();
 
   if (warnings.length) showWarning(warnings.join(' '));
+  renderStripped(result.meta.stripped);
 
   // Focus the primary action button so Enter triggers Download .md without
   // tabbing past the gear icon. (When btnMd is disabled, focus the next

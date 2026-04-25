@@ -5,6 +5,7 @@ const DEFAULT_SETTINGS = {
   includeImages: true,
   customStripSelectors: '',
   customKeepSelectors: '',
+  perDomainRules: '',
   filenameTemplate: '{title}_{domain}_{date}_{hash}'
 };
 
@@ -15,8 +16,11 @@ const FIELDS = [
   'includeImages',
   'customStripSelectors',
   'customKeepSelectors',
+  'perDomainRules',
   'filenameTemplate'
 ];
+
+const WELCOME_KEY = 'cleanlift:welcomeDismissed';
 
 const $ = (id) => document.getElementById(id);
 
@@ -108,8 +112,9 @@ function markDirtyIfChanged() {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  loadSettings();
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadSettings();
+  await maybeShowWelcome();
   $('save').addEventListener('click', saveSettings);
   $('reset').addEventListener('click', resetSettings);
   $('shortcut-link').addEventListener('click', (e) => {
@@ -120,18 +125,16 @@ document.addEventListener('DOMContentLoaded', () => {
   for (const f of FIELDS) {
     const el = $(f);
     if (!el) continue;
-    // Live dirty-state tracking.
-    el.addEventListener('input', markDirtyIfChanged);
+    el.addEventListener('input', () => {
+      markDirtyIfChanged();
+      validateSelectorField(f);
+    });
     el.addEventListener('change', markDirtyIfChanged);
-    // Autosave on blur, so closing the tab from a textarea doesn't lose
-    // the user's per-domain selector tuning. The explicit Save button
-    // remains as a safety affordance.
     el.addEventListener('blur', () => {
       if (dirty) saveSettings();
     });
   }
 
-  // Cmd/Ctrl+S anywhere inside the page saves, even from inside a textarea.
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 's') {
       e.preventDefault();
@@ -139,8 +142,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // beforeunload guard: if the user closes the tab with unsaved changes
-  // (e.g. they typed into the textarea then immediately Cmd+W), warn them.
   window.addEventListener('beforeunload', (e) => {
     if (dirty) {
       e.preventDefault();
@@ -148,10 +149,126 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // View extraction history button (added in Wave 8).
   const viewLog = $('view-log');
   if (viewLog) viewLog.addEventListener('click', openLogViewer);
+
+  const testBtn = $('test-selectors');
+  if (testBtn) testBtn.addEventListener('click', testOnCurrentTab);
+
+  const dismiss = $('welcome-dismiss');
+  if (dismiss) dismiss.addEventListener('click', dismissWelcome);
+
+  // Initial validation pass for fields with stored content.
+  for (const f of ['customStripSelectors', 'customKeepSelectors', 'perDomainRules']) {
+    validateSelectorField(f);
+  }
 });
+
+async function maybeShowWelcome() {
+  try {
+    const stored = await chrome.storage.local.get(WELCOME_KEY);
+    if (stored[WELCOME_KEY]) return;
+    const card = $('welcome-card');
+    if (card) card.hidden = false;
+  } catch (_e) {}
+}
+
+async function dismissWelcome() {
+  const card = $('welcome-card');
+  if (card) card.hidden = true;
+  try { await chrome.storage.local.set({ [WELCOME_KEY]: true }); } catch (_e) {}
+}
+
+// Validates each line of a selector field. Custom strip/keep accept either
+// CSS selectors or class/id name fragments; per-domain rules require
+// "hostname: selectors". Surfaces the first invalid line in red help text
+// without preventing save (the strip pipeline gracefully skips invalid
+// entries thanks to per-selector try/catch).
+function validateSelectorField(field) {
+  const errEl = $(field + '-error');
+  if (!errEl) return;
+  const value = getValue(field);
+  const errors = [];
+
+  if (field === 'customStripSelectors' || field === 'customKeepSelectors') {
+    const lines = String(value || '').split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+    for (const line of lines) {
+      if (line.startsWith('.') || line.startsWith('#') || line.startsWith('[') || /[\s>+~]/.test(line)) {
+        try { document.querySelector(line); }
+        catch (_e) { errors.push(line); }
+      }
+    }
+  } else if (field === 'perDomainRules') {
+    const lines = String(value || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    for (const line of lines) {
+      if (line.startsWith('#')) continue;
+      const idx = line.indexOf(':');
+      if (idx < 0) {
+        errors.push('Line missing ":" — ' + line.slice(0, 60));
+        continue;
+      }
+      const sels = line.slice(idx + 1).trim();
+      try { document.querySelector(sels); }
+      catch (_e) { errors.push('Invalid selector — ' + line.slice(0, 80)); }
+    }
+  }
+
+  if (errors.length) {
+    errEl.hidden = false;
+    errEl.textContent = 'Issue: ' + errors[0] + (errors.length > 1 ? ' (+' + (errors.length - 1) + ' more)' : '');
+  } else {
+    errEl.hidden = true;
+    errEl.textContent = '';
+  }
+}
+
+// Runs the strip pipeline against the active tab and reports counts so the
+// researcher can verify their selectors hit something before committing to a
+// 200-page batch.
+async function testOnCurrentTab() {
+  const result = $('test-result');
+  if (result) result.textContent = 'Running…';
+  // Save first so the test runs against the latest selectors.
+  if (dirty) await saveSettings();
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.id) { if (result) result.textContent = 'No active tab.'; return; }
+
+    const ready = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => !!(window.cleanlift && window.cleanlift.extract)
+    });
+    if (!ready[0] || !ready[0].result) {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['libs/turndown.js', 'content.js']
+      });
+    }
+
+    const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+    const merged = Object.assign({}, DEFAULT_SETTINGS, settings);
+    const [{ result: out }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (s) => window.cleanlift.extract(s),
+      args: [merged]
+    });
+
+    if (!out || out.error) {
+      if (result) result.textContent = 'Test failed: ' + ((out && out.error) || 'unknown error');
+      return;
+    }
+    const stripped = out.meta && out.meta.stripped || {};
+    const total = Object.values(stripped).reduce((a, b) => a + (b || 0), 0);
+    const customCount = stripped.customSelectors || 0;
+    if (result) {
+      result.textContent = 'Stripped ' + total + ' total elements (' + customCount + ' from your custom selectors). ' +
+        out.meta.wordCount + ' words, ~' + out.meta.tokens + ' tokens.';
+    }
+  } catch (e) {
+    if (result) result.textContent = 'Test failed: ' + (e && e.message || e);
+  }
+}
 
 // Renders the extraction log into a hidden modal-like region inside the
 // options page. Read-only; researcher uses it to audit batch completeness.

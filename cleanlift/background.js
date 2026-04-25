@@ -5,6 +5,7 @@ const DEFAULT_SETTINGS = {
   includeImages: true,
   customStripSelectors: '',
   customKeepSelectors: '',
+  perDomainRules: '',
   filenameTemplate: '{title}_{domain}_{date}_{hash}'
 };
 
@@ -31,7 +32,7 @@ async function getSettings() {
   // Defensive shape coercion: a corrupt synced record (string→array, etc.)
   // would crash extract() in the page context. Coerce to expected types.
   const merged = Object.assign({}, DEFAULT_SETTINGS, stored);
-  for (const key of ['customStripSelectors', 'customKeepSelectors', 'filenameTemplate']) {
+  for (const key of ['customStripSelectors', 'customKeepSelectors', 'perDomainRules', 'filenameTemplate']) {
     if (typeof merged[key] !== 'string') merged[key] = DEFAULT_SETTINGS[key];
   }
   for (const key of ['includeFrontmatter', 'includeLinks', 'includeImages']) {
@@ -277,11 +278,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
   chrome.storage.sync.get(DEFAULT_SETTINGS, (current) => {
     const merged = Object.assign({}, DEFAULT_SETTINGS, current);
     chrome.storage.sync.set(merged);
   });
+  // First-run: open options page so the user sees the welcome card and
+  // discovers the keyboard shortcut + per-domain settings.
+  if (details && details.reason === 'install') {
+    chrome.runtime.openOptionsPage().catch(() => {});
+  }
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {

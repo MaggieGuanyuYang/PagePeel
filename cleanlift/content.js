@@ -848,6 +848,25 @@
     return root.querySelectorAll('[aria-expanded="false"], details:not([open])').length;
   }
 
+  // Parse per-domain rules of the form
+  //   durham.ac.uk: .intl-entry-requirements, .related-courses
+  //   ucl.ac.uk: .promo, #event-banner
+  // Lines without a colon are ignored. Returns Map<hostname, "selector,selector">.
+  function parsePerDomainRules(text) {
+    const out = new Map();
+    if (!text) return out;
+    for (const raw of String(text).split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) continue;
+      const idx = line.indexOf(':');
+      if (idx < 0) continue;
+      const host = line.slice(0, idx).trim().toLowerCase();
+      const sels = line.slice(idx + 1).trim();
+      if (host && sels) out.set(host, sels);
+    }
+    return out;
+  }
+
   function extract(settings) {
     // In-tab mutex: when popup and shortcut both fire concurrently they used
     // to produce two extractions racing into the downloads layer, where
@@ -873,6 +892,7 @@
       includeImages: true,
       customStripSelectors: '',
       customKeepSelectors: '',
+      perDomainRules: '',
       filenameTemplate: '{title}_{domain}_{date}_{hash}'
     }, settings || {});
 
@@ -884,6 +904,25 @@
     const ct = (document.contentType || '').toLowerCase();
     if (ct && !ct.includes('html') && !ct.includes('xml') && !ct.includes('text/plain')) {
       return { error: 'CleanLift only extracts HTML pages. This tab reports content-type: ' + document.contentType + '.' };
+    }
+
+    // Per-domain rules: lines of "hostname: selector1, selector2". The matching
+    // rules for the current hostname are appended to customStripSelectors so
+    // a researcher tuning Durham doesn't have to re-edit selectors when
+    // moving to UCL.
+    const perDomain = parsePerDomainRules(settings.perDomainRules || '');
+    const currentHost = (location.hostname || '').toLowerCase();
+    const domainStrip = [];
+    for (const [host, sels] of perDomain) {
+      if (currentHost === host || currentHost.endsWith('.' + host)) {
+        domainStrip.push(sels);
+      }
+    }
+    if (domainStrip.length) {
+      settings = Object.assign({}, settings, {
+        customStripSelectors: [settings.customStripSelectors, ...domainStrip]
+          .filter(Boolean).join(', ')
+      });
     }
 
     // Compute hidden + keep info from live DOM (read-only — no mutation).
@@ -910,32 +949,47 @@
       return false;
     }
 
-    function safeRemove(el) {
-      if (!el || !el.parentNode) return;
-      if (isKept(el)) return;
+    // Tracks counts of stripped elements per category, surfaced via
+    // meta.stripped so the researcher can audit what disappeared without
+    // diffing markdown output by eye.
+    const stripped = {
+      hidden: 0,
+      tagsAlways: 0,
+      tagsOutsideContent: 0,
+      ariaRoles: 0,
+      patternMatched: 0,
+      customSelectors: 0,
+      figures: 0
+    };
+
+    function safeRemove(el, bucket) {
+      if (!el || !el.parentNode) return false;
+      if (isKept(el)) return false;
       el.parentNode.removeChild(el);
+      if (bucket && stripped[bucket] != null) stripped[bucket]++;
+      return true;
     }
 
     // Strip hidden elements
     for (const liveEl of hiddenLive) {
       const cloneEl = liveToClone.get(liveEl);
-      if (cloneEl) safeRemove(cloneEl);
+      if (cloneEl) safeRemove(cloneEl, 'hidden');
     }
 
     // Strip unconditional tags (script/style/noscript/iframe).
-    STRIP_TAGS_ALWAYS.forEach(tag => clone.querySelectorAll(tag).forEach(safeRemove));
+    STRIP_TAGS_ALWAYS.forEach(tag => clone.querySelectorAll(tag).forEach(el => safeRemove(el, 'tagsAlways')));
 
     // Strip header/footer/nav only when outside <article>/<main>. HTML5 allows
     // these tags inside sectioning content as section headers, where they
     // carry real body content (e.g. WordPress block themes' .entry-header).
     STRIP_TAGS_OUTSIDE_CONTENT.forEach(tag => {
       clone.querySelectorAll(tag).forEach(el => {
-        if (!el.closest('article, main')) safeRemove(el);
+        if (!el.closest('article, main')) safeRemove(el, 'tagsOutsideContent');
       });
     });
 
     // Strip by ARIA role
-    STRIP_ARIA_ROLES.forEach(role => clone.querySelectorAll('[role="' + role + '"]').forEach(safeRemove));
+    STRIP_ARIA_ROLES.forEach(role => clone.querySelectorAll('[role="' + role + '"]').forEach(el => safeRemove(el, 'ariaRoles')));
 
     // Strip by class/id pattern
     const customPatterns = (settings.customStripSelectors || '')
@@ -943,7 +997,7 @@
     const patterns = buildBoilerplatePatterns(customPatterns);
     const candidates = Array.from(clone.querySelectorAll('div, section, aside, ul, ol, span, button, form, dialog'));
     for (const el of candidates) {
-      if (elementMatchesBoilerplate(el, patterns)) safeRemove(el);
+      if (elementMatchesBoilerplate(el, patterns)) safeRemove(el, 'patternMatched');
     }
 
     // Strip by user CSS selectors. Each selector runs in its own try/catch so
@@ -954,7 +1008,7 @@
     const invalidSelectors = [];
     for (const sel of customCssSelectors) {
       try {
-        clone.querySelectorAll(sel).forEach(safeRemove);
+        clone.querySelectorAll(sel).forEach(el => safeRemove(el, 'customSelectors'));
       } catch (_e) {
         invalidSelectors.push(sel);
       }
@@ -973,11 +1027,12 @@
           const p = document.createElement('p');
           p.textContent = cap.textContent.trim();
           fig.replaceWith(p);
+          stripped.figures++;
         } else {
-          safeRemove(fig);
+          safeRemove(fig, 'figures');
         }
       });
-      clone.querySelectorAll('img, picture').forEach(safeRemove);
+      clone.querySelectorAll('img, picture').forEach(el => safeRemove(el, 'figures'));
     }
 
     // Optional: replace links with text
@@ -1079,6 +1134,7 @@
       collapsedCount,
       lazyAccordionsSuspected: collapsedCount >= 1,
       readyState: document.readyState,
+      stripped,
       warnings,
       markdownError,
       jsonError

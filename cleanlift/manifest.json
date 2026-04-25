@@ -14,7 +14,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "CleanLift — extract page",
+    "default_title": "CleanLift — extract page (Alt+Shift+E)",
     "default_popup": "popup/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",

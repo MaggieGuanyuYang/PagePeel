@@ -346,3 +346,26 @@ body[data-state="error"] { border-left-color: var(--error); }
   box-shadow: var(--focus-ring);
   border-radius: 3px;
 }
+
+.cl-stripped-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+.cl-stripped-list li {
+  display: contents;
+}
+.cl-stripped-list li > span:first-child {
+  color: var(--fg);
+}
+.cl-stripped-list li > span:last-child {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--fg);
+}
+
