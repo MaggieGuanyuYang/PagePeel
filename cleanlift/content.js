@@ -696,15 +696,34 @@
     });
   }
 
+  // Stable, fast hash of a URL — a 6-char djb2 in base36. Used to disambiguate
+  // filenames so two pages whose sanitized titles collide (or two re-runs of
+  // the same URL on the same date) don't silently overwrite via uniquify.
+  function hashUrl(url) {
+    let h = 5381;
+    const s = String(url || '');
+    for (let i = 0; i < s.length; i++) {
+      h = (((h << 5) + h) | 0) ^ s.charCodeAt(i);
+    }
+    return Math.abs(h).toString(36).padStart(6, '0').slice(0, 6);
+  }
+
   function makeFilename(template, ext, ctx) {
-    let name = applyFilenameTemplate(template || '{title}_{domain}_{date}', {
+    const tpl = template || '{title}_{domain}_{date}_{hash}';
+    let name = applyFilenameTemplate(tpl, {
       title: safeTitle(ctx.title),
       domain: safeTitle(ctx.domain),
       date: ctx.date,
-      timestamp: ctx.timestamp.replace(/[:]/g, '-')
+      timestamp: ctx.timestamp.replace(/[:]/g, '-'),
+      hash: ctx.hash
     });
+    // If the user's stored template predates the {hash}/{timestamp} variables,
+    // append the hash so different URLs never collide on the filename layer.
+    if (!/\{hash\}|\{timestamp\}/.test(tpl) && ctx.hash) {
+      name += '_' + ctx.hash;
+    }
     name = name.replace(/[\\/:*?"<>|]/g, '-').replace(/-{2,}/g, '-').slice(0, 180);
-    if (!name) name = 'cleanlift-' + ctx.date;
+    if (!name) name = 'cleanlift-' + ctx.date + '-' + (ctx.hash || '');
     return name + '.' + ext;
   }
 
@@ -753,12 +772,28 @@
     return String(tokens);
   }
 
-  function checkLazyAccordions(root) {
-    const triggers = root.querySelectorAll('[aria-expanded="false"], details:not([open])');
-    return triggers.length > 8;
+  function countLazyAccordions(root) {
+    return root.querySelectorAll('[aria-expanded="false"], details:not([open])').length;
   }
 
   function extract(settings) {
+    // In-tab mutex: when popup and shortcut both fire concurrently they used
+    // to produce two extractions racing into the downloads layer, where
+    // 'uniquify' silently turned the second into name(1) — masquerading as
+    // two pages from one. The lock makes the second caller fail-fast.
+    if (window.__cleanliftBusy) {
+      return { error: 'CleanLift is already extracting this tab. Wait for the current run to finish, then re-trigger.' };
+    }
+    window.__cleanliftBusy = true;
+
+    try {
+      return extractInner(settings);
+    } finally {
+      window.__cleanliftBusy = false;
+    }
+  }
+
+  function extractInner(settings) {
     settings = Object.assign({
       outputFormat: 'markdown',
       includeFrontmatter: true,
@@ -766,7 +801,7 @@
       includeImages: true,
       customStripSelectors: '',
       customKeepSelectors: '',
-      filenameTemplate: '{title}_{domain}_{date}'
+      filenameTemplate: '{title}_{domain}_{date}_{hash}'
     }, settings || {});
 
     const liveBody = document.body;
@@ -930,17 +965,22 @@
       warnings.push({ kind: 'json-error', message: 'JSON build failed: ' + jsonError });
     }
 
+    const collapsedCount = countLazyAccordions(document.body);
+    const urlHash = hashUrl(location.href);
+
     const meta = {
       url: location.href,
       domain,
       title: document.title || '',
       timestamp,
       date,
+      hash: urlHash,
       wordCount,
       charCount,
       tokens,
       tokenBadge: formatTokenBadge(tokens),
-      lazyAccordionsSuspected: checkLazyAccordions(document.body),
+      collapsedCount,
+      lazyAccordionsSuspected: collapsedCount >= 1,
       readyState: document.readyState,
       warnings,
       markdownError,

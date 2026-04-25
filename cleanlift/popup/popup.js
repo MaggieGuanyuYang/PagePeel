@@ -5,10 +5,25 @@ const DEFAULT_SETTINGS = {
   includeImages: true,
   customStripSelectors: '',
   customKeepSelectors: '',
-  filenameTemplate: '{title}_{domain}_{date}'
+  filenameTemplate: '{title}_{domain}_{date}_{hash}'
 };
 
 const RESTRICTED_PROTOCOLS = ['chrome:', 'chrome-extension:', 'edge:', 'about:', 'view-source:', 'devtools:', 'chrome-search:'];
+
+// Restricted-URL check matches background.js so the popup and shortcut paths
+// agree on which tabs CleanLift refuses to run in.
+function isRestrictedUrl(url) {
+  if (!url) return true;
+  try {
+    const u = new URL(url);
+    if (RESTRICTED_PROTOCOLS.includes(u.protocol)) return true;
+    if (u.hostname === 'chrome.google.com' && u.pathname.startsWith('/webstore')) return true;
+    if (u.hostname === 'chromewebstore.google.com') return true;
+    return false;
+  } catch (_e) {
+    return true;
+  }
+}
 
 const $ = (id) => document.getElementById(id);
 
@@ -45,15 +60,8 @@ function showWarning(text) {
   els.warning.textContent = text;
 }
 
-function isRestricted(url) {
-  if (!url) return true;
-  try {
-    const u = new URL(url);
-    return RESTRICTED_PROTOCOLS.includes(u.protocol);
-  } catch (_e) {
-    return true;
-  }
-}
+// Kept as a thin alias for legacy callers below.
+function isRestricted(url) { return isRestrictedUrl(url); }
 
 function formatNumber(n) {
   return n.toLocaleString();
@@ -111,12 +119,35 @@ async function setBadge(tabId, text) {
 async function downloadText(text, filename, mime) {
   const blob = new Blob([text], { type: mime + ';charset=utf-8' });
   const url = URL.createObjectURL(blob);
+  let id;
   try {
-    const id = await chrome.downloads.download({ url, filename, saveAs: false, conflictAction: 'uniquify' });
-    return id;
-  } finally {
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    id = await chrome.downloads.download({ url, filename, saveAs: false, conflictAction: 'uniquify' });
+  } catch (e) {
+    URL.revokeObjectURL(url);
+    throw e;
   }
+  // Revoke when the download finishes so the blob doesn't linger in
+  // extension-origin memory longer than necessary.
+  const onChange = (delta) => {
+    if (delta.id === id && delta.state && (delta.state.current === 'complete' || delta.state.current === 'interrupted')) {
+      URL.revokeObjectURL(url);
+      try { chrome.downloads.onChanged.removeListener(onChange); } catch (_e) {}
+    }
+  };
+  try { chrome.downloads.onChanged.addListener(onChange); } catch (_e) {
+    URL.revokeObjectURL(url);
+  }
+  setTimeout(() => {
+    try { chrome.downloads.onChanged.removeListener(onChange); } catch (_e) {}
+    URL.revokeObjectURL(url);
+  }, 30_000);
+  return id;
+}
+
+function logExtraction(entry) {
+  try {
+    chrome.runtime.sendMessage({ type: 'cleanlift:logExtraction', entry });
+  } catch (_e) {}
 }
 
 function flashButton(btn, label) {
@@ -197,6 +228,24 @@ async function init() {
   if (warnings.length) showWarning(warnings.join(' '));
 
   await setBadge(tab.id, result.meta.tokenBadge || '');
+
+  logExtraction({
+    ts: new Date().toISOString(),
+    source: 'popup',
+    tabId: tab.id,
+    url: tab.url,
+    title: result.meta.title,
+    ok: true,
+    formats: settings.outputFormat,
+    filenameMd: result.filenameMd,
+    filenameJson: result.filenameJson,
+    charCount: result.meta.charCount,
+    tokens: result.meta.tokens,
+    hash: result.meta.hash,
+    warnings: result.meta.warnings || [],
+    readyState: result.meta.readyState,
+    collapsedCount: result.meta.collapsedCount
+  });
 }
 
 els.btnMd.addEventListener('click', async () => {

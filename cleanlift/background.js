@@ -5,10 +5,13 @@ const DEFAULT_SETTINGS = {
   includeImages: true,
   customStripSelectors: '',
   customKeepSelectors: '',
-  filenameTemplate: '{title}_{domain}_{date}'
+  filenameTemplate: '{title}_{domain}_{date}_{hash}'
 };
 
 const RESTRICTED_PROTOCOLS = ['chrome:', 'chrome-extension:', 'edge:', 'about:', 'view-source:', 'devtools:', 'chrome-search:'];
+
+const LOG_KEY = 'cleanlift:extractionLog';
+const LOG_CAP = 500;
 
 function isRestricted(url) {
   if (!url) return true;
@@ -16,6 +19,7 @@ function isRestricted(url) {
     const u = new URL(url);
     if (RESTRICTED_PROTOCOLS.includes(u.protocol)) return true;
     if (u.hostname === 'chrome.google.com' && u.pathname.startsWith('/webstore')) return true;
+    if (u.hostname === 'chromewebstore.google.com') return true;
     return false;
   } catch (_e) {
     return true;
@@ -24,7 +28,19 @@ function isRestricted(url) {
 
 async function getSettings() {
   const stored = await chrome.storage.sync.get(DEFAULT_SETTINGS);
-  return Object.assign({}, DEFAULT_SETTINGS, stored);
+  // Defensive shape coercion: a corrupt synced record (string→array, etc.)
+  // would crash extract() in the page context. Coerce to expected types.
+  const merged = Object.assign({}, DEFAULT_SETTINGS, stored);
+  for (const key of ['customStripSelectors', 'customKeepSelectors', 'filenameTemplate']) {
+    if (typeof merged[key] !== 'string') merged[key] = DEFAULT_SETTINGS[key];
+  }
+  for (const key of ['includeFrontmatter', 'includeLinks', 'includeImages']) {
+    if (typeof merged[key] !== 'boolean') merged[key] = DEFAULT_SETTINGS[key];
+  }
+  if (!['markdown', 'json', 'both'].includes(merged.outputFormat)) {
+    merged.outputFormat = 'markdown';
+  }
+  return merged;
 }
 
 async function ensureContentLoaded(tabId) {
@@ -50,18 +66,45 @@ async function runExtractionInTab(tabId, settings) {
   return result;
 }
 
+// Revoke the blob URL when the download completes (or fails). The previous
+// 60-second setTimeout would never fire if the MV3 service worker idled out
+// at 30s, leaking blob URLs across the SW lifetime.
+function revokeOnDownloadComplete(downloadId, blobUrl) {
+  const onChange = (delta) => {
+    if (delta.id !== downloadId) return;
+    if (!delta.state) return;
+    const state = delta.state.current;
+    if (state === 'complete' || state === 'interrupted') {
+      try { URL.revokeObjectURL(blobUrl); } catch (_e) {}
+      try { chrome.downloads.onChanged.removeListener(onChange); } catch (_e) {}
+    }
+  };
+  try {
+    chrome.downloads.onChanged.addListener(onChange);
+  } catch (_e) {
+    try { URL.revokeObjectURL(blobUrl); } catch (_e2) {}
+    return;
+  }
+  // Fallback in case onChanged never fires (rare but possible if Chrome
+  // closes mid-download). 30s is short enough to land before SW idle-out.
+  setTimeout(() => {
+    try { chrome.downloads.onChanged.removeListener(onChange); } catch (_e) {}
+    try { URL.revokeObjectURL(blobUrl); } catch (_e) {}
+  }, 30_000);
+}
+
 async function downloadText(text, filename, mime) {
   const blob = new Blob([text], { type: mime + ';charset=utf-8' });
   const url = URL.createObjectURL(blob);
+  let id;
   try {
-    // conflictAction: 'uniquify' — when two pages share a title+date the
-    // second download saves as `name (1).md` instead of overwriting the first.
-    // This matters for the PRD's 200-page corpus workflow.
-    const id = await chrome.downloads.download({ url, filename, saveAs: false, conflictAction: 'uniquify' });
-    return id;
-  } finally {
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    id = await chrome.downloads.download({ url, filename, saveAs: false, conflictAction: 'uniquify' });
+  } catch (e) {
+    try { URL.revokeObjectURL(url); } catch (_e) {}
+    throw e;
   }
+  revokeOnDownloadComplete(id, url);
+  return id;
 }
 
 async function setBadge(tabId, text) {
@@ -70,66 +113,7 @@ async function setBadge(tabId, text) {
     await chrome.action.setBadgeTextColor({ color: '#FFFFFF', tabId });
     await chrome.action.setBadgeText({ text: text || '', tabId });
   } catch (_e) {
-    // Some Chrome versions don't support setBadgeTextColor; fall back silently
     try { await chrome.action.setBadgeText({ text: text || '', tabId }); } catch (_e2) {}
-  }
-}
-
-async function handleShortcut() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) return;
-  if (isRestricted(tab.url)) {
-    await chrome.action.setBadgeText({ text: '!', tabId: tab.id });
-    await chrome.action.setBadgeBackgroundColor({ color: '#B91C1C', tabId: tab.id });
-    return;
-  }
-
-  const settings = await getSettings();
-  let result;
-  try {
-    result = await runExtractionInTab(tab.id, settings);
-  } catch (err) {
-    console.warn('CleanLift extraction failed', err);
-    await chrome.action.setBadgeText({ text: 'ERR', tabId: tab.id });
-    await chrome.action.setBadgeBackgroundColor({ color: '#B91C1C', tabId: tab.id });
-    return;
-  }
-  if (!result || result.error) {
-    await chrome.action.setBadgeText({ text: 'ERR', tabId: tab.id });
-    return;
-  }
-
-  // Fail-closed: skip the download for whichever format produced no payload.
-  // Mirror the warning state on the badge so the user sees something is off
-  // without having to open the popup.
-  let wroteAny = false;
-  if (settings.outputFormat === 'json' || settings.outputFormat === 'both') {
-    if (result.json) {
-      await downloadText(result.json, result.filenameJson, 'application/json');
-      wroteAny = true;
-    }
-  }
-  if (settings.outputFormat === 'markdown' || settings.outputFormat === 'both') {
-    if (result.markdown) {
-      await downloadText(result.markdown, result.filenameMd, 'text/markdown');
-      wroteAny = true;
-    }
-  }
-
-  const hasWarning = (result.meta.warnings || []).length > 0
-    || (result.meta.readyState && result.meta.readyState !== 'complete')
-    || result.meta.lazyAccordionsSuspected;
-
-  if (!wroteAny) {
-    await setBadgeError(tab.id, 'ERR');
-    return;
-  }
-
-  if (hasWarning) {
-    // Amber badge so the user knows to open the popup before trusting the file.
-    await setBadgeWarn(tab.id, result.meta.tokenBadge || '!');
-  } else {
-    await setBadge(tab.id, result.meta.tokenBadge);
   }
 }
 
@@ -147,6 +131,115 @@ async function setBadgeWarn(tabId, text) {
   } catch (_e) {}
 }
 
+// Append an entry to the extraction-history ring buffer in chrome.storage.local
+// so a researcher running 200 extractions can audit "did all 200 succeed?".
+async function appendToLog(entry) {
+  try {
+    const stored = await chrome.storage.local.get(LOG_KEY);
+    const log = Array.isArray(stored[LOG_KEY]) ? stored[LOG_KEY] : [];
+    log.push(entry);
+    if (log.length > LOG_CAP) log.splice(0, log.length - LOG_CAP);
+    await chrome.storage.local.set({ [LOG_KEY]: log });
+  } catch (e) {
+    console.warn('CleanLift: log append failed', e);
+  }
+}
+
+function buildLogEntry(tab, source, settings, result) {
+  return {
+    ts: new Date().toISOString(),
+    source, // 'shortcut' | 'popup'
+    tabId: tab && tab.id,
+    url: tab && tab.url,
+    title: result && result.meta && result.meta.title,
+    ok: !!(result && !result.error),
+    error: (result && result.error) || null,
+    formats: settings.outputFormat,
+    filenameMd: result && result.filenameMd,
+    filenameJson: result && result.filenameJson,
+    charCount: result && result.meta && result.meta.charCount,
+    tokens: result && result.meta && result.meta.tokens,
+    hash: result && result.meta && result.meta.hash,
+    warnings: (result && result.meta && result.meta.warnings) || [],
+    readyState: result && result.meta && result.meta.readyState,
+    collapsedCount: result && result.meta && result.meta.collapsedCount
+  };
+}
+
+async function handleShortcut() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) return;
+  if (isRestricted(tab.url)) {
+    await setBadgeError(tab.id, '!');
+    await appendToLog({
+      ts: new Date().toISOString(), source: 'shortcut',
+      tabId: tab.id, url: tab.url, ok: false, error: 'restricted-url'
+    });
+    return;
+  }
+
+  const settings = await getSettings();
+  let result;
+  try {
+    result = await runExtractionInTab(tab.id, settings);
+  } catch (err) {
+    console.warn('CleanLift extraction failed', err);
+    await setBadgeError(tab.id, 'ERR');
+    await appendToLog({
+      ts: new Date().toISOString(), source: 'shortcut',
+      tabId: tab.id, url: tab.url, ok: false, error: String(err && err.message || err)
+    });
+    return;
+  }
+
+  if (!result || result.error) {
+    await setBadgeError(tab.id, 'ERR');
+    await appendToLog(buildLogEntry(tab, 'shortcut', settings, result || { error: 'no-result' }));
+    return;
+  }
+
+  // Readyness gate: shortcut path now refuses to write a download when the
+  // page is still loading, so a fast Alt+Shift+E through tabs doesn't
+  // silently capture pre-DOMContentLoaded snapshots.
+  if (result.meta.readyState && result.meta.readyState !== 'complete') {
+    await setBadgeWarn(tab.id, 'WAIT');
+    await appendToLog(buildLogEntry(tab, 'shortcut', settings, Object.assign({}, result, {
+      error: 'page-not-ready', meta: result.meta
+    })));
+    return;
+  }
+
+  let wroteAny = false;
+  if (settings.outputFormat === 'json' || settings.outputFormat === 'both') {
+    if (result.json) {
+      await downloadText(result.json, result.filenameJson, 'application/json');
+      wroteAny = true;
+    }
+  }
+  if (settings.outputFormat === 'markdown' || settings.outputFormat === 'both') {
+    if (result.markdown) {
+      await downloadText(result.markdown, result.filenameMd, 'text/markdown');
+      wroteAny = true;
+    }
+  }
+
+  const hasWarning = (result.meta.warnings || []).length > 0
+    || result.meta.lazyAccordionsSuspected;
+
+  if (!wroteAny) {
+    await setBadgeError(tab.id, 'ERR');
+    await appendToLog(buildLogEntry(tab, 'shortcut', settings, Object.assign({}, result, { error: 'no-output' })));
+    return;
+  }
+
+  if (hasWarning) {
+    await setBadgeWarn(tab.id, result.meta.tokenBadge || '!');
+  } else {
+    await setBadge(tab.id, result.meta.tokenBadge);
+  }
+  await appendToLog(buildLogEntry(tab, 'shortcut', settings, result));
+}
+
 chrome.commands.onCommand.addListener((command) => {
   if (command === 'extract-and-download') {
     handleShortcut();
@@ -155,15 +248,31 @@ chrome.commands.onCommand.addListener((command) => {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.type) return;
+  // Only accept messages from this extension's own contexts (popup, options,
+  // content scripts the extension itself injected). Cross-extension messages
+  // are received via onMessageExternal, which we don't register.
+  if (sender && sender.id && sender.id !== chrome.runtime.id) return;
+
   if (msg.type === 'cleanlift:setBadge') {
-    const tabId = msg.tabId || (sender.tab && sender.tab.id);
-    setBadge(tabId, msg.text || '').then(() => sendResponse({ ok: true }));
+    // Only allow the sender's own tab to be badged; ignore arbitrary tabId.
+    const tabId = (sender.tab && sender.tab.id) || msg.tabId;
+    if (typeof tabId !== 'number') return;
+    setBadge(tabId, String(msg.text || '').slice(0, 8)).then(() => sendResponse({ ok: true }));
     return true;
   }
-  if (msg.type === 'cleanlift:download') {
-    downloadText(msg.text, msg.filename, msg.mime || 'text/markdown')
-      .then((id) => sendResponse({ ok: true, id }))
-      .catch((err) => sendResponse({ ok: false, error: String(err) }));
+  if (msg.type === 'cleanlift:logExtraction') {
+    if (!msg.entry || typeof msg.entry !== 'object') return;
+    appendToLog(msg.entry).then(() => sendResponse({ ok: true }));
+    return true;
+  }
+  if (msg.type === 'cleanlift:getLog') {
+    chrome.storage.local.get(LOG_KEY).then(s => {
+      sendResponse({ ok: true, log: s[LOG_KEY] || [] });
+    });
+    return true;
+  }
+  if (msg.type === 'cleanlift:clearLog') {
+    chrome.storage.local.remove(LOG_KEY).then(() => sendResponse({ ok: true }));
     return true;
   }
 });
@@ -176,9 +285,20 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  // Clear stale token-count badge as soon as the user navigates away from
-  // the page that produced it. Only fire on URL change, not every status tick.
   if (changeInfo.url) {
     chrome.action.setBadgeText({ text: '', tabId }).catch(() => {});
   }
+});
+
+// Tab switch — clear badge so the count from a previous extraction doesn't
+// linger on a different tab. Mitigates SPA-navigation badge staleness when
+// the user moves between tabs as part of a 200-page workflow.
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  chrome.action.getBadgeText({ tabId }).then(text => {
+    // Only clear if it looks like a token-count badge (digits or 'k');
+    // leave warning/error badges in place so they remain visible.
+    if (text && /^\d|k$/.test(text)) {
+      chrome.action.setBadgeText({ text: '', tabId }).catch(() => {});
+    }
+  }).catch(() => {});
 });
