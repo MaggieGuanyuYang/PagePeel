@@ -19,12 +19,12 @@
 
       <section class="cl-card cl-welcome" id="welcome-card" hidden>
         <h2>Welcome to CleanLift</h2>
-        <p class="cl-welcome-lede">A faithful webpage extractor for LLM pipelines. Here's the 30-second tour:</p>
+        <p class="cl-welcome-lede">A clean text extractor for any webpage. Here's the 30-second tour:</p>
         <ol class="cl-welcome-steps">
-          <li><strong>Click the toolbar icon</strong> on any page to extract — popup shows a preview, three save buttons, and a stripped-element breakdown.</li>
-          <li><strong>Press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></strong> for one-shot save without the popup. The badge shows your token estimate; amber means there's a warning to check.</li>
-          <li><strong>Tune per-site</strong> with the rules below — global custom selectors apply everywhere; per-domain rules only fire on matching hosts.</li>
-          <li><strong>Audit a batch</strong> with <em>View extraction log</em> at the bottom — every attempt is recorded so you can confirm a 200-page run had no silent failures.</li>
+          <li><strong>Click the toolbar icon</strong> on any page to extract — the popup shows a preview, save buttons, and a summary of what was removed.</li>
+          <li><strong>Press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></strong> to save without opening the popup. The icon shows the token estimate after each extraction; amber means there's a warning to check.</li>
+          <li><strong>Choose your output</strong> below — Markdown, JSON, or both. Toggle hyperlinks and images on or off to control file size.</li>
+          <li><strong>See your history</strong> with <em>View extraction history</em> at the bottom — every save is recorded so you can confirm a long run had no missed pages.</li>
         </ol>
         <p class="cl-welcome-actions">
           <button id="welcome-dismiss" class="cl-btn-primary">Got it</button>
@@ -48,7 +48,7 @@
         <div class="cl-row">
           <label class="cl-toggle">
             <input type="checkbox" id="includeFrontmatter" />
-            <span>Include YAML frontmatter (url, title, date, word count)</span>
+            <span>Include page details at the top (URL, title, date, word count)</span>
           </label>
         </div>
 
@@ -69,48 +69,10 @@
 
         <div class="cl-row">
           <label class="cl-field">
-            <span class="cl-field-label">Filename template</span>
+            <span class="cl-field-label">Filename pattern</span>
             <input type="text" id="filenameTemplate" placeholder="{title}_{domain}_{date}_{hash}" />
-            <span class="cl-help">Variables: <code>{title}</code> <code>{domain}</code> <code>{date}</code> <code>{timestamp}</code> <code>{hash}</code> — <code>{hash}</code> is a 6-char URL hash that disambiguates pages whose titles collide.</span>
+            <span class="cl-help">Available pieces: <code>{title}</code> page title · <code>{domain}</code> website · <code>{date}</code> today · <code>{timestamp}</code> exact time · <code>{hash}</code> short page-specific code that prevents files from overwriting each other.</span>
           </label>
-        </div>
-      </section>
-
-      <section class="cl-card">
-        <h2>Boilerplate filtering</h2>
-        <p class="cl-card-intro">CleanLift strips <code>&lt;nav&gt;</code>, <code>&lt;footer&gt;</code>, cookie banners, ads, related-content sections, etc. by default. Use these fields to tune for specific sites.</p>
-
-        <div class="cl-row">
-          <label class="cl-field">
-            <span class="cl-field-label">Custom strip selectors / patterns</span>
-            <textarea id="customStripSelectors" rows="4" placeholder=".promo-banner, #newsletter-signup, .related-courses"></textarea>
-            <span class="cl-help">Comma- or newline-separated. CSS selectors (start with <code>.</code> <code>#</code> <code>[</code>) or simple class/id name fragments. Invalid CSS selectors are flagged below; the rest still apply.</span>
-            <span class="cl-help cl-help-error" id="customStripSelectors-error" hidden></span>
-          </label>
-        </div>
-
-        <div class="cl-row">
-          <label class="cl-field">
-            <span class="cl-field-label">Custom keep selectors</span>
-            <textarea id="customKeepSelectors" rows="3" placeholder=".course-content, nav.in-page-toc"></textarea>
-            <span class="cl-help">Elements matching these selectors (and their children) are protected from removal. Useful when a site uses <code>&lt;nav&gt;</code> for actual content.</span>
-            <span class="cl-help cl-help-error" id="customKeepSelectors-error" hidden></span>
-          </label>
-        </div>
-
-        <div class="cl-row">
-          <label class="cl-field">
-            <span class="cl-field-label">Per-domain rules</span>
-            <textarea id="perDomainRules" rows="4" placeholder="durham.ac.uk: .intl-entry-requirements, .related-courses
-ucl.ac.uk: .promo, #event-banner"></textarea>
-            <span class="cl-help">One rule per line: <code>hostname: selectors</code>. Matches the current page's hostname (and any subdomain). Stack alongside the global custom selectors above so a Durham tweak doesn't break UCL.</span>
-            <span class="cl-help cl-help-error" id="perDomainRules-error" hidden></span>
-          </label>
-        </div>
-
-        <div class="cl-row cl-row-actions">
-          <button id="test-selectors" class="cl-btn-ghost" type="button">Test on current tab</button>
-          <span class="cl-help" id="test-result"></span>
         </div>
       </section>
 
@@ -121,20 +83,20 @@ ucl.ac.uk: .promo, #event-banner"></textarea>
       </section>
 
       <section class="cl-card">
-        <h2>Extraction log</h2>
-        <p class="cl-card-intro">Every extraction (popup and shortcut) is recorded so you can audit batch completeness. Capped at 500 entries, stored locally — never leaves your browser.</p>
+        <h2>Extraction history</h2>
+        <p class="cl-card-intro">Every save is recorded so you can check that nothing was missed during a long batch. Stored privately on your computer — never sent anywhere — and capped at the most recent 500 entries.</p>
         <div class="cl-row cl-row-actions">
-          <button id="view-log" class="cl-btn-ghost" type="button">View extraction log</button>
+          <button id="view-log" class="cl-btn-ghost" type="button">View extraction history</button>
         </div>
       </section>
 
       <section id="log-region" class="cl-log-region" hidden>
         <header class="cl-log-header">
-          <h2>Extraction log</h2>
+          <h2>Extraction history</h2>
           <span id="log-summary" class="cl-help"></span>
           <span class="cl-spacer"></span>
-          <button id="log-export" class="cl-btn-ghost" type="button">Export JSONL</button>
-          <button id="log-clear" class="cl-btn-ghost" type="button">Clear log</button>
+          <button id="log-export" class="cl-btn-ghost" type="button">Export as file</button>
+          <button id="log-clear" class="cl-btn-ghost" type="button">Clear history</button>
           <button id="log-close" class="cl-btn-ghost" type="button">Close</button>
         </header>
         <div id="log-body" class="cl-log-body"></div>

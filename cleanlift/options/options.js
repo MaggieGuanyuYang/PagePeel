@@ -3,20 +3,23 @@ const DEFAULT_SETTINGS = {
   includeFrontmatter: true,
   includeLinks: true,
   includeImages: true,
+  // Power-user selector fields are no longer surfaced in the options UI but
+  // remain in DEFAULT_SETTINGS so the content script's settings merge stays
+  // shape-compatible with stored records from earlier versions.
   customStripSelectors: '',
   customKeepSelectors: '',
   perDomainRules: '',
   filenameTemplate: '{title}_{domain}_{date}_{hash}'
 };
 
+// Only fields with a corresponding form input are listed here. The selector
+// fields above are intentionally omitted so they don't get touched by the
+// options UI (their stored values stay at defaults).
 const FIELDS = [
   'outputFormat',
   'includeFrontmatter',
   'includeLinks',
   'includeImages',
-  'customStripSelectors',
-  'customKeepSelectors',
-  'perDomainRules',
   'filenameTemplate'
 ];
 
@@ -125,10 +128,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   for (const f of FIELDS) {
     const el = $(f);
     if (!el) continue;
-    el.addEventListener('input', () => {
-      markDirtyIfChanged();
-      validateSelectorField(f);
-    });
+    el.addEventListener('input', markDirtyIfChanged);
     el.addEventListener('change', markDirtyIfChanged);
     el.addEventListener('blur', () => {
       if (dirty) saveSettings();
@@ -152,16 +152,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const viewLog = $('view-log');
   if (viewLog) viewLog.addEventListener('click', openLogViewer);
 
-  const testBtn = $('test-selectors');
-  if (testBtn) testBtn.addEventListener('click', testOnCurrentTab);
-
   const dismiss = $('welcome-dismiss');
   if (dismiss) dismiss.addEventListener('click', dismissWelcome);
-
-  // Initial validation pass for fields with stored content.
-  for (const f of ['customStripSelectors', 'customKeepSelectors', 'perDomainRules']) {
-    validateSelectorField(f);
-  }
 });
 
 async function maybeShowWelcome() {
@@ -177,97 +169,6 @@ async function dismissWelcome() {
   const card = $('welcome-card');
   if (card) card.hidden = true;
   try { await chrome.storage.local.set({ [WELCOME_KEY]: true }); } catch (_e) {}
-}
-
-// Validates each line of a selector field. Custom strip/keep accept either
-// CSS selectors or class/id name fragments; per-domain rules require
-// "hostname: selectors". Surfaces the first invalid line in red help text
-// without preventing save (the strip pipeline gracefully skips invalid
-// entries thanks to per-selector try/catch).
-function validateSelectorField(field) {
-  const errEl = $(field + '-error');
-  if (!errEl) return;
-  const value = getValue(field);
-  const errors = [];
-
-  if (field === 'customStripSelectors' || field === 'customKeepSelectors') {
-    const lines = String(value || '').split(/[,\n]/).map(s => s.trim()).filter(Boolean);
-    for (const line of lines) {
-      if (line.startsWith('.') || line.startsWith('#') || line.startsWith('[') || /[\s>+~]/.test(line)) {
-        try { document.querySelector(line); }
-        catch (_e) { errors.push(line); }
-      }
-    }
-  } else if (field === 'perDomainRules') {
-    const lines = String(value || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-    for (const line of lines) {
-      if (line.startsWith('#')) continue;
-      const idx = line.indexOf(':');
-      if (idx < 0) {
-        errors.push('Line missing ":" — ' + line.slice(0, 60));
-        continue;
-      }
-      const sels = line.slice(idx + 1).trim();
-      try { document.querySelector(sels); }
-      catch (_e) { errors.push('Invalid selector — ' + line.slice(0, 80)); }
-    }
-  }
-
-  if (errors.length) {
-    errEl.hidden = false;
-    errEl.textContent = 'Issue: ' + errors[0] + (errors.length > 1 ? ' (+' + (errors.length - 1) + ' more)' : '');
-  } else {
-    errEl.hidden = true;
-    errEl.textContent = '';
-  }
-}
-
-// Runs the strip pipeline against the active tab and reports counts so the
-// researcher can verify their selectors hit something before committing to a
-// 200-page batch.
-async function testOnCurrentTab() {
-  const result = $('test-result');
-  if (result) result.textContent = 'Running…';
-  // Save first so the test runs against the latest selectors.
-  if (dirty) await saveSettings();
-
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.id) { if (result) result.textContent = 'No active tab.'; return; }
-
-    const ready = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: () => !!(window.cleanlift && window.cleanlift.extract)
-    });
-    if (!ready[0] || !ready[0].result) {
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ['libs/turndown.js', 'content.js']
-      });
-    }
-
-    const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
-    const merged = Object.assign({}, DEFAULT_SETTINGS, settings);
-    const [{ result: out }] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: (s) => window.cleanlift.extract(s),
-      args: [merged]
-    });
-
-    if (!out || out.error) {
-      if (result) result.textContent = 'Test failed: ' + ((out && out.error) || 'unknown error');
-      return;
-    }
-    const stripped = out.meta && out.meta.stripped || {};
-    const total = Object.values(stripped).reduce((a, b) => a + (b || 0), 0);
-    const customCount = stripped.customSelectors || 0;
-    if (result) {
-      result.textContent = 'Stripped ' + total + ' total elements (' + customCount + ' from your custom selectors). ' +
-        out.meta.wordCount + ' words, ~' + out.meta.tokens + ' tokens.';
-    }
-  } catch (e) {
-    if (result) result.textContent = 'Test failed: ' + (e && e.message || e);
-  }
 }
 
 // Renders the extraction log into a hidden modal-like region inside the

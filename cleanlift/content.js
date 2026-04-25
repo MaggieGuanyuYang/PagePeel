@@ -1106,27 +1106,27 @@
       });
     }
     if (markdownError) {
-      warnings.push({ kind: 'markdown-error', message: 'Markdown conversion failed: ' + markdownError });
+      warnings.push({ kind: 'markdown-error', message: 'Could not produce a Markdown file from this page: ' + markdownError });
     }
     if (jsonError) {
-      warnings.push({ kind: 'json-error', message: 'JSON build failed: ' + jsonError });
+      warnings.push({ kind: 'json-error', message: 'Could not produce a JSON file from this page: ' + jsonError });
     }
     if (iframeCounts.blocked) {
       warnings.push({
         kind: 'iframe-blocked',
-        message: iframeCounts.blocked + ' cross-origin iframe(s) could not be read — content inside may be missing.'
+        message: 'This page embeds content from another website (' + iframeCounts.blocked + ' embed' + (iframeCounts.blocked > 1 ? 's' : '') + '). Browsers block extensions from reading those, so any text inside may be missing.'
       });
     }
     if (iframeCounts.inlined) {
       warnings.push({
         kind: 'iframe-inlined',
-        message: iframeCounts.inlined + ' same-origin iframe(s) inlined into the extraction.'
+        message: 'Captured content from ' + iframeCounts.inlined + ' embedded panel' + (iframeCounts.inlined > 1 ? 's' : '') + ' on this page.'
       });
     }
     if (shadowCounts.open) {
       warnings.push({
         kind: 'shadow-open',
-        message: shadowCounts.open + ' open shadow root(s) inlined into the extraction.'
+        message: 'Captured ' + shadowCounts.open + ' specially-rendered section' + (shadowCounts.open > 1 ? 's' : '') + ' (used by some custom components).'
       });
     }
 

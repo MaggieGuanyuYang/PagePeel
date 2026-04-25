@@ -48,21 +48,21 @@ const els = {
 };
 
 const STRIPPED_LABELS = {
-  hidden: 'Hidden elements',
-  tagsAlways: 'Scripts / iframes',
-  tagsOutsideContent: 'Header / footer / nav (outside article)',
-  ariaRoles: 'Navigation / banner / contentinfo roles',
-  patternMatched: 'Class/id boilerplate matches',
-  customSelectors: 'Custom strip selectors',
-  figures: 'Images / figures'
+  hidden: 'Hidden parts of the page',
+  tagsAlways: 'Page code (scripts, embeds)',
+  tagsOutsideContent: 'Site header, footer, and menus',
+  ariaRoles: 'Navigation regions',
+  patternMatched: 'Ads, banners, and related-content blocks',
+  customSelectors: 'Custom rules',
+  figures: 'Images'
 };
 
 const HIDDEN_REASON_LABELS = {
-  'css-hidden': '↳ display:none / visibility:hidden',
-  'display-none': '↳ display:none',
-  'visibility-hidden': '↳ visibility:hidden',
-  'aria-hidden': '↳ aria-hidden, no text',
-  'unknown': '↳ unknown'
+  'css-hidden': '↳ hidden by site styling',
+  'display-none': '↳ hidden by site styling',
+  'visibility-hidden': '↳ hidden by site styling',
+  'aria-hidden': '↳ decorative, no text',
+  'unknown': '↳ other'
 };
 
 function renderStripped(stripped) {
@@ -291,11 +291,11 @@ async function init() {
   if (result.meta.readyState && result.meta.readyState !== 'complete') {
     statusState = 'warn';
     statusText = 'Page still loading.';
-    warnings.push('The page reports readyState=' + result.meta.readyState + '. Some content may not be in the DOM yet — wait for full load and re-extract.');
+    warnings.push('This page hasn\'t finished loading. Some content may be missing — wait for the page to fully load, then click the icon again.');
   }
   if (result.meta.lazyAccordionsSuspected) {
     if (statusState === 'ok') { statusState = 'warn'; statusText = 'Collapsed sections detected.'; }
-    warnings.push('This page has collapsed accordions/details. Expand them in the page before re-extracting if their content is missing.');
+    warnings.push('This page has collapsed sections (e.g. expandable details, FAQ accordions). If the content inside them matters, click to open them first, then extract again.');
   }
   if (Array.isArray(result.meta.warnings)) {
     for (const w of result.meta.warnings) warnings.push(w.message || String(w));
