@@ -1,6 +1,6 @@
 (function () {
-  if (window.__cleanliftReady) return;
-  window.__cleanliftReady = true;
+  if (window.__pagepeelReady) return;
+  window.__pagepeelReady = true;
 
   const STRIP_TAGS_ALWAYS = ['script', 'style', 'noscript', 'iframe'];
   // header/footer/nav are stripped only outside <article>/<main>: HTML5 allows
@@ -252,7 +252,7 @@
       // Setting innerHTML on a detached element doesn't execute scripts,
       // and the strip pipeline removes <script> right after.
       const wrapper = clone.ownerDocument.createElement('div');
-      wrapper.setAttribute('data-cleanlift-iframe', liveIf.src || '');
+      wrapper.setAttribute('data-pagepeel-iframe', liveIf.src || '');
       wrapper.innerHTML = body.innerHTML;
       cloneIf.replaceWith(wrapper);
       counts.inlined++;
@@ -274,7 +274,7 @@
         const cloneEl = liveToClone.get(el);
         if (cloneEl) {
           const wrapper = clone.ownerDocument.createElement('div');
-          wrapper.setAttribute('data-cleanlift-shadow', el.tagName.toLowerCase());
+          wrapper.setAttribute('data-pagepeel-shadow', el.tagName.toLowerCase());
           wrapper.innerHTML = el.shadowRoot.innerHTML;
           cloneEl.appendChild(wrapper);
         }
@@ -876,15 +876,15 @@
     // to produce two extractions racing into the downloads layer, where
     // 'uniquify' silently turned the second into name(1) — masquerading as
     // two pages from one. The lock makes the second caller fail-fast.
-    if (window.__cleanliftBusy) {
-      return { error: 'CleanLift is already extracting this tab. Wait for the current run to finish, then re-trigger.' };
+    if (window.__pagepeelBusy) {
+      return { error: 'PagePeel is already extracting this tab. Wait for the current run to finish, then re-trigger.' };
     }
-    window.__cleanliftBusy = true;
+    window.__pagepeelBusy = true;
 
     try {
       return extractInner(settings);
     } finally {
-      window.__cleanliftBusy = false;
+      window.__pagepeelBusy = false;
     }
   }
 
@@ -907,7 +907,7 @@
 
     const ct = (document.contentType || '').toLowerCase();
     if (ct && !ct.includes('html') && !ct.includes('xml') && !ct.includes('text/plain')) {
-      return { error: 'CleanLift only extracts HTML pages. This tab reports content-type: ' + document.contentType + '.' };
+      return { error: 'PagePeel only extracts HTML pages. This tab reports content-type: ' + document.contentType + '.' };
     }
 
     // Per-domain rules: lines of "hostname: selector1, selector2". The matching
@@ -1192,5 +1192,5 @@
     };
   }
 
-  window.cleanlift = { extract };
+  window.pagepeel = { extract };
 })();

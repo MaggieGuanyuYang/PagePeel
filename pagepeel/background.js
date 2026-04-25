@@ -11,7 +11,7 @@ const DEFAULT_SETTINGS = {
 
 const RESTRICTED_PROTOCOLS = ['chrome:', 'chrome-extension:', 'edge:', 'about:', 'view-source:', 'devtools:', 'chrome-search:'];
 
-const LOG_KEY = 'cleanlift:extractionLog';
+const LOG_KEY = 'pagepeel:extractionLog';
 const LOG_CAP = 500;
 
 function isRestricted(url) {
@@ -47,7 +47,7 @@ async function getSettings() {
 async function ensureContentLoaded(tabId) {
   const [{ result: ready }] = await chrome.scripting.executeScript({
     target: { tabId },
-    func: () => !!(window.cleanlift && window.cleanlift.extract)
+    func: () => !!(window.pagepeel && window.pagepeel.extract)
   });
   if (!ready) {
     await chrome.scripting.executeScript({
@@ -61,7 +61,7 @@ async function runExtractionInTab(tabId, settings) {
   await ensureContentLoaded(tabId);
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId },
-    func: (s) => window.cleanlift.extract(s),
+    func: (s) => window.pagepeel.extract(s),
     args: [settings]
   });
   return result;
@@ -144,7 +144,7 @@ async function appendToLog(entry) {
     if (log.length > LOG_CAP) log.splice(0, log.length - LOG_CAP);
     await chrome.storage.local.set({ [LOG_KEY]: log });
   } catch (e) {
-    console.warn('CleanLift: log append failed', e);
+    console.warn('PagePeel: log append failed', e);
   }
 }
 
@@ -186,7 +186,7 @@ async function handleShortcut() {
   try {
     result = await runExtractionInTab(tab.id, settings);
   } catch (err) {
-    console.warn('CleanLift extraction failed', err);
+    console.warn('PagePeel extraction failed', err);
     await setBadgeError(tab.id, 'ERR');
     await appendToLog({
       ts: new Date().toISOString(), source: 'shortcut',
@@ -256,25 +256,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // are received via onMessageExternal, which we don't register.
   if (sender && sender.id && sender.id !== chrome.runtime.id) return;
 
-  if (msg.type === 'cleanlift:setBadge') {
+  if (msg.type === 'pagepeel:setBadge') {
     // Only allow the sender's own tab to be badged; ignore arbitrary tabId.
     const tabId = (sender.tab && sender.tab.id) || msg.tabId;
     if (typeof tabId !== 'number') return;
     setBadge(tabId, String(msg.text || '').slice(0, 8)).then(() => sendResponse({ ok: true }));
     return true;
   }
-  if (msg.type === 'cleanlift:logExtraction') {
+  if (msg.type === 'pagepeel:logExtraction') {
     if (!msg.entry || typeof msg.entry !== 'object') return;
     appendToLog(msg.entry).then(() => sendResponse({ ok: true }));
     return true;
   }
-  if (msg.type === 'cleanlift:getLog') {
+  if (msg.type === 'pagepeel:getLog') {
     chrome.storage.local.get(LOG_KEY).then(s => {
       sendResponse({ ok: true, log: s[LOG_KEY] || [] });
     });
     return true;
   }
-  if (msg.type === 'cleanlift:clearLog') {
+  if (msg.type === 'pagepeel:clearLog') {
     chrome.storage.local.remove(LOG_KEY).then(() => sendResponse({ ok: true }));
     return true;
   }

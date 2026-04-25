@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "CleanLift",
+  "name": "PagePeel",
   "version": "1.0.0",
   "description": "Faithful webpage text extractor for LLM pipelines. Capture clean Markdown or JSON from the rendered page in one click.",
   "minimum_chrome_version": "114",
@@ -14,7 +14,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "CleanLift — extract page (Alt+Shift+E)",
+    "default_title": "PagePeel — extract page (Alt+Shift+E)",
     "default_popup": "popup/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",

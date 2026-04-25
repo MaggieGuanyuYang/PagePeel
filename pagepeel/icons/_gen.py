@@ -1,4 +1,4 @@
-"""Generate brand icons for CleanLift at 16/32/48/128 px using stdlib only.
+"""Generate brand icons for PagePeel at 16/32/48/128 px using stdlib only.
 
 Design: deep-purple rounded square (brand-deep #27153e); inside, two stacked
 cream "page" rectangles, the back tinted teal (brand-teal #76c8c2) suggesting
@@ -12,7 +12,7 @@ import zlib
 from pathlib import Path
 
 
-# Brand palette — keep aligned with cleanlift/popup/popup.css :root tokens.
+# Brand palette — keep aligned with pagepeel/popup/popup.css :root tokens.
 BG = (39, 21, 62, 255)            # #27153e brand-deep
 PAGE = (254, 251, 255, 255)       # #fefbff brand-cream
 PAGE_BACK = (118, 200, 194, 255)  # #76c8c2 brand-teal — tinted back page

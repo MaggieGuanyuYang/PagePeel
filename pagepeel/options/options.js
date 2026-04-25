@@ -23,7 +23,7 @@ const FIELDS = [
   'filenameTemplate'
 ];
 
-const WELCOME_KEY = 'cleanlift:welcomeDismissed';
+const WELCOME_KEY = 'pagepeel:welcomeDismissed';
 
 const $ = (id) => document.getElementById(id);
 
@@ -183,7 +183,7 @@ async function openLogViewer() {
   let log = [];
   try {
     const resp = await new Promise((resolve) =>
-      chrome.runtime.sendMessage({ type: 'cleanlift:getLog' }, resolve)
+      chrome.runtime.sendMessage({ type: 'pagepeel:getLog' }, resolve)
     );
     log = (resp && resp.log) || [];
   } catch (e) {
@@ -240,7 +240,7 @@ async function openLogViewer() {
     const u = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = u;
-    a.download = 'cleanlift-log-' + new Date().toISOString().slice(0, 10) + '.jsonl';
+    a.download = 'pagepeel-log-' + new Date().toISOString().slice(0, 10) + '.jsonl';
     a.click();
     setTimeout(() => URL.revokeObjectURL(u), 5000);
   };
@@ -248,7 +248,7 @@ async function openLogViewer() {
   const clearBtn = $('log-clear');
   if (clearBtn) clearBtn.onclick = async () => {
     if (!confirm('Clear all logged extractions? This cannot be undone.')) return;
-    await new Promise(r => chrome.runtime.sendMessage({ type: 'cleanlift:clearLog' }, r));
+    await new Promise(r => chrome.runtime.sendMessage({ type: 'pagepeel:clearLog' }, r));
     body.textContent = 'Log cleared.';
     $('log-summary').textContent = '';
   };

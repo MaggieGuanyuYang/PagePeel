@@ -1,4 +1,4 @@
-# PRD: CleanLift — Faithful Webpage Text Extractor for LLM Pipelines
+# PRD: PagePeel — Faithful Webpage Text Extractor for LLM Pipelines
 
 ## Problem
 

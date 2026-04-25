@@ -12,7 +12,7 @@ const DEFAULT_SETTINGS = {
 const RESTRICTED_PROTOCOLS = ['chrome:', 'chrome-extension:', 'edge:', 'about:', 'view-source:', 'devtools:', 'chrome-search:'];
 
 // Restricted-URL check matches background.js so the popup and shortcut paths
-// agree on which tabs CleanLift refuses to run in.
+// agree on which tabs PagePeel refuses to run in.
 function isRestrictedUrl(url) {
   if (!url) return true;
   try {
@@ -175,7 +175,7 @@ async function getSettings() {
 async function runExtraction(tabId, settings) {
   const [{ result: ready }] = await chrome.scripting.executeScript({
     target: { tabId },
-    func: () => !!(window.cleanlift && window.cleanlift.extract)
+    func: () => !!(window.pagepeel && window.pagepeel.extract)
   });
   if (!ready) {
     await chrome.scripting.executeScript({
@@ -185,7 +185,7 @@ async function runExtraction(tabId, settings) {
   }
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId },
-    func: (s) => window.cleanlift.extract(s),
+    func: (s) => window.pagepeel.extract(s),
     args: [settings]
   });
   return result;
@@ -228,7 +228,7 @@ async function downloadText(text, filename, mime) {
 
 function logExtraction(entry) {
   try {
-    chrome.runtime.sendMessage({ type: 'cleanlift:logExtraction', entry });
+    chrome.runtime.sendMessage({ type: 'pagepeel:logExtraction', entry });
   } catch (_e) {}
 }
 
@@ -258,7 +258,7 @@ async function init() {
     return;
   }
   if (isRestricted(tab.url)) {
-    setStatus('error', 'CleanLift can\'t run on this page.');
+    setStatus('error', 'PagePeel can\'t run on this page.');
     showWarning('Browser-internal pages (chrome://, extension pages, the Web Store) cannot be extracted. Try a regular https:// page.', 'error');
     return;
   }
@@ -270,7 +270,7 @@ async function init() {
   try {
     result = await runExtraction(tab.id, settings);
   } catch (err) {
-    console.warn('CleanLift extraction error', err);
+    console.warn('PagePeel extraction error', err);
     setStatus('error', 'Extraction failed.');
     showWarning(String(err && err.message ? err.message : err), 'error');
     return;

@@ -1,6 +1,6 @@
 # Third-Party Components
 
-CleanLift vendors a single third-party JavaScript dependency. No npm install
+PagePeel vendors a single third-party JavaScript dependency. No npm install
 or build step is involved at packaging time; the file ships as-is in the
 extension bundle.
 
@@ -15,7 +15,7 @@ extension bundle.
   recorded at vendor time — confirm before any upgrade.
 - **SHA-256 of vendored file (after Wave 6 banner added):** computed at
   build time; recompute via
-  `shasum -a 256 cleanlift/libs/turndown.js`
+  `shasum -a 256 pagepeel/libs/turndown.js`
   and update this line if the file changes.
 
 ### Why vendored
@@ -29,7 +29,7 @@ a research tool that the maintainer wants to keep audit-friendly.
 1. Pull the desired tagged release from upstream.
 2. Replace `libs/turndown.js` with the new file.
 3. Restore the banner block at the top of the file (the upstream release
-   does not include CleanLift-specific provenance text).
+   does not include PagePeel-specific provenance text).
 4. Recompute SHA-256 and update this file.
 5. Smoke-test extraction on at least one page from each PRD provider
    category (university, professional body, commercial, NHS,
