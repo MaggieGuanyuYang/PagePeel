@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>CleanLift — Options</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main class="cl-page">
+      <header class="cl-page-header">
+        <div class="cl-brand">
+          <img src="../icons/icon48.png" alt="" width="32" height="32" />
+          <div>
+            <h1>CleanLift</h1>
+            <p class="cl-subtitle">Faithful webpage extraction for LLM pipelines</p>
+          </div>
+        </div>
+      </header>
+
+      <section class="cl-card">
+        <h2>Output</h2>
+        <div class="cl-row">
+          <label class="cl-field">
+            <span class="cl-field-label">Format</span>
+            <select id="outputFormat">
+              <option value="markdown">Markdown only (.md)</option>
+              <option value="json">JSON only (.json)</option>
+              <option value="both">Both (.md + .json)</option>
+            </select>
+            <span class="cl-help">Keyboard shortcut downloads in the chosen format(s).</span>
+          </label>
+        </div>
+
+        <div class="cl-row">
+          <label class="cl-toggle">
+            <input type="checkbox" id="includeFrontmatter" />
+            <span>Include YAML frontmatter (url, title, date, word count)</span>
+          </label>
+        </div>
+
+        <div class="cl-row">
+          <label class="cl-toggle">
+            <input type="checkbox" id="includeLinks" />
+            <span>Preserve hyperlinks</span>
+            <span class="cl-help-inline">— turn off to reduce token count</span>
+          </label>
+        </div>
+
+        <div class="cl-row">
+          <label class="cl-toggle">
+            <input type="checkbox" id="includeImages" />
+            <span>Include images as alt text</span>
+          </label>
+        </div>
+
+        <div class="cl-row">
+          <label class="cl-field">
+            <span class="cl-field-label">Filename template</span>
+            <input type="text" id="filenameTemplate" placeholder="{title}_{domain}_{date}" />
+            <span class="cl-help">Variables: <code>{title}</code> <code>{domain}</code> <code>{date}</code> <code>{timestamp}</code></span>
+          </label>
+        </div>
+      </section>
+
+      <section class="cl-card">
+        <h2>Boilerplate filtering</h2>
+        <p class="cl-card-intro">CleanLift removes <code>&lt;nav&gt;</code>, <code>&lt;footer&gt;</code>, cookie banners, ads, related-content sections, etc. by default. Use these fields to fine-tune for specific sites.</p>
+
+        <div class="cl-row">
+          <label class="cl-field">
+            <span class="cl-field-label">Custom strip selectors / patterns</span>
+            <textarea id="customStripSelectors" rows="4" placeholder=".promo-banner, #newsletter-signup, .related-courses"></textarea>
+            <span class="cl-help">Comma- or newline-separated. CSS selectors (start with <code>.</code> <code>#</code> <code>[</code>) or simple class/id name fragments.</span>
+          </label>
+        </div>
+
+        <div class="cl-row">
+          <label class="cl-field">
+            <span class="cl-field-label">Custom keep selectors</span>
+            <textarea id="customKeepSelectors" rows="3" placeholder=".course-content, nav.in-page-toc"></textarea>
+            <span class="cl-help">Elements matching these selectors (and their children) are protected from removal. Useful when a site uses <code>&lt;nav&gt;</code> for actual content.</span>
+          </label>
+        </div>
+      </section>
+
+      <section class="cl-card cl-card-soft">
+        <h2>Keyboard shortcut</h2>
+        <p>Default shortcut: <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> — extracts and downloads the active page in the selected format(s) without opening the popup.</p>
+        <p><a href="#" id="shortcut-link">Customize keyboard shortcut</a></p>
+      </section>
+
+      <footer class="cl-actions">
+        <span class="cl-status" id="status" aria-live="polite"></span>
+        <button id="reset" class="cl-btn-ghost">Reset to defaults</button>
+        <button id="save" class="cl-btn-primary">Save</button>
+      </footer>
+    </main>
+
+    <script src="options.js"></script>
+  </body>
+</html>

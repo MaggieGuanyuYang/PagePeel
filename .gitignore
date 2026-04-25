@@ -1,0 +1,22 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Node (test artifacts only — no node_modules in the extension itself)
+node_modules/
+
+# Icon generator (keep _gen.py but ignore its bytecode)
+__pycache__/
+*.pyc
+
+# Chrome extension packaging artifacts
+*.crx
+*.pem
+*.zip

@@ -1,0 +1,231 @@
+:root {
+  --bg: #f8f9fc;
+  --surface: #ffffff;
+  --surface-soft: #f4f5fb;
+  --border: #e2e4f0;
+  --border-strong: #c8ccea;
+  --fg: #15172b;
+  --fg-muted: #5b6080;
+  --accent: #4b46dc;
+  --accent-hover: #3b36c6;
+  --shadow: 0 1px 2px rgba(20, 22, 60, 0.04), 0 4px 16px rgba(20, 22, 60, 0.06);
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14162a;
+    --surface: #1d1f33;
+    --surface-soft: #232539;
+    --border: #34374f;
+    --border-strong: #444870;
+    --fg: #f0f1f8;
+    --fg-muted: #9498b8;
+    --accent: #7d79ee;
+    --accent-hover: #918de8;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui, sans-serif;
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--bg);
+  line-height: 1.5;
+}
+
+.cl-page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 28px 80px 28px;
+}
+
+.cl-page-header {
+  margin-bottom: 24px;
+}
+.cl-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.cl-brand h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.cl-subtitle {
+  margin: 2px 0 0 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.cl-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px 22px 18px 22px;
+  margin-bottom: 18px;
+  box-shadow: var(--shadow);
+}
+
+.cl-card.cl-card-soft {
+  background: var(--surface-soft);
+  box-shadow: none;
+}
+
+.cl-card h2 {
+  margin: 0 0 4px 0;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+}
+
+.cl-card-intro {
+  margin: 6px 0 16px 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.cl-row + .cl-row {
+  margin-top: 14px;
+}
+
+.cl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cl-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.cl-help, .cl-help-inline {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.cl-help-inline {
+  margin-left: 4px;
+}
+
+.cl-help code, .cl-card-intro code {
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+}
+
+input[type="text"],
+textarea,
+select {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 100ms ease, box-shadow 100ms ease;
+}
+textarea {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  resize: vertical;
+  min-height: 64px;
+}
+input[type="text"]:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(75, 70, 220, 0.15);
+}
+
+.cl-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.cl-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.cl-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 14px 0 0 0;
+  margin-top: 8px;
+}
+
+.cl-status {
+  flex: 1;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.cl-status.cl-status-saved {
+  color: #22a06b;
+}
+
+.cl-btn-primary, .cl-btn-ghost {
+  padding: 9px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+.cl-btn-primary {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.cl-btn-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.cl-btn-ghost {
+  background: transparent;
+  color: var(--fg-muted);
+  border-color: var(--border-strong);
+}
+.cl-btn-ghost:hover {
+  color: var(--fg);
+  background: var(--surface-soft);
+}
+
+kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  font-family: inherit;
+  font-size: 11px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+a { color: var(--accent); }
+a:hover { text-decoration: underline; }
