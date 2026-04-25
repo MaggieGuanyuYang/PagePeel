@@ -1,3 +1,13 @@
+/*!
+ * turndown — HTML-to-Markdown converter
+ * Vendored into CleanLift; see ../THIRD_PARTY.md for provenance and SHA-256.
+ * Upstream: https://github.com/mixmark-io/turndown
+ * License:  MIT (https://github.com/mixmark-io/turndown/blob/master/LICENSE)
+ *
+ * The signature (TurndownService IIFE wrapper, RootNode helper, x-turndown
+ * sentinel pattern) matches mixmark-io/turndown 7.x. Keep this banner aligned
+ * with THIRD_PARTY.md when upgrading.
+ */
 var TurndownService = (function () {
   'use strict';
 
