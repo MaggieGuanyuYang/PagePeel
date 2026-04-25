@@ -48,16 +48,32 @@ let extracted = null;
 function setStatus(state, text) {
   els.statusDot.dataset.state = state;
   els.statusText.textContent = text;
+  // Mirror state to <body> so the brand-edge stripe colour reflects success/
+  // warn/error at a glance.
+  document.body.dataset.state = state;
 }
 
-function showWarning(text) {
+function showWarning(text, kind) {
   if (!text) {
     els.warning.hidden = true;
     els.warning.textContent = '';
+    delete els.warning.dataset.kind;
     return;
   }
   els.warning.hidden = false;
   els.warning.textContent = text;
+  if (kind) els.warning.dataset.kind = kind;
+  else delete els.warning.dataset.kind;
+}
+
+function clearActionTooltips() {
+  for (const btn of [els.btnMd, els.btnJson, els.btnCopy]) {
+    if (btn.disabled) {
+      btn.title = btn.dataset.disabledReason || 'Unavailable for this extraction.';
+    } else {
+      btn.title = '';
+    }
+  }
 }
 
 // Kept as a thin alias for legacy callers below.
@@ -151,14 +167,22 @@ function logExtraction(entry) {
 }
 
 function flashButton(btn, label) {
-  const original = btn.textContent;
+  // Preserve the button's primary/secondary affordance: don't repaint to
+  // green. We stamp a small ✓ icon and a 1px success border, then revert.
   const cls = 'cl-btn-success';
-  btn.textContent = label;
+  const span = document.createElement('span');
+  const tick = document.createElement('span');
+  tick.className = 'cl-btn-icon';
+  tick.textContent = '✓';
+  span.append(tick, document.createTextNode(' ' + label));
+  const original = btn.innerHTML;
+  btn.innerHTML = '';
+  btn.appendChild(span);
   btn.classList.add(cls);
   setTimeout(() => {
-    btn.textContent = original;
+    btn.innerHTML = original;
     btn.classList.remove(cls);
-  }, 1200);
+  }, 1400);
 }
 
 async function init() {
@@ -169,7 +193,7 @@ async function init() {
   }
   if (isRestricted(tab.url)) {
     setStatus('error', 'CleanLift can\'t run on this page.');
-    showWarning('Browser-internal pages (chrome://, extension pages) cannot be extracted. Try a regular https:// page.');
+    showWarning('Browser-internal pages (chrome://, extension pages, the Web Store) cannot be extracted. Try a regular https:// page.', 'error');
     return;
   }
 
@@ -182,13 +206,13 @@ async function init() {
   } catch (err) {
     console.warn('CleanLift extraction error', err);
     setStatus('error', 'Extraction failed.');
-    showWarning(String(err && err.message ? err.message : err));
+    showWarning(String(err && err.message ? err.message : err), 'error');
     return;
   }
 
   if (!result || result.error) {
     setStatus('error', 'Extraction failed.');
-    showWarning(result && result.error ? result.error : 'Unknown error.');
+    showWarning(result && result.error ? result.error : 'Unknown error.', 'error');
     return;
   }
 
@@ -221,11 +245,26 @@ async function init() {
   els.chars.textContent = formatNumber(result.meta.charCount);
   els.tokens.textContent = '~' + formatTokens(result.meta.tokens);
   els.preview.textContent = result.markdown ? previewText(result.markdown) : '(markdown unavailable — see warning above)';
+
   els.btnMd.disabled = !result.markdown;
   els.btnJson.disabled = !result.json;
   els.btnCopy.disabled = !result.markdown;
 
+  if (!result.markdown) els.btnMd.dataset.disabledReason = 'Markdown conversion failed for this page.';
+  if (!result.json) els.btnJson.dataset.disabledReason = 'JSON build failed for this page.';
+  if (!result.markdown) els.btnCopy.dataset.disabledReason = 'Nothing to copy — markdown unavailable.';
+  clearActionTooltips();
+
   if (warnings.length) showWarning(warnings.join(' '));
+
+  // Focus the primary action button so Enter triggers Download .md without
+  // tabbing past the gear icon. (When btnMd is disabled, focus the next
+  // available button.)
+  const focusTarget = !els.btnMd.disabled ? els.btnMd
+    : !els.btnJson.disabled ? els.btnJson
+    : !els.btnCopy.disabled ? els.btnCopy
+    : els.openOptions;
+  try { focusTarget.focus(); } catch (_e) {}
 
   await setBadge(tab.id, result.meta.tokenBadge || '');
 

@@ -11,14 +11,14 @@
         <img src="../icons/icon32.png" alt="" width="22" height="22" />
         <h1>CleanLift</h1>
       </div>
-      <button id="open-options" class="cl-icon-button" title="Options" aria-label="Options">
+      <button id="open-options" class="cl-icon-button" title="Settings (Alt+Shift+E to extract without opening popup)" aria-label="Open settings">
         <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
           <path fill="currentColor" d="M9.31 2H6.69l-.34 1.65a4.99 4.99 0 0 0-1.46.85l-1.6-.5L1.97 6.27l1.27 1.07a5 5 0 0 0 0 1.32L1.97 9.73l1.32 2.27 1.6-.5c.43.36.92.65 1.46.85L6.69 14h2.62l.34-1.65a4.99 4.99 0 0 0 1.46-.85l1.6.5 1.32-2.27-1.27-1.07a5 5 0 0 0 0-1.32l1.27-1.07L12.71 4l-1.6.5a4.99 4.99 0 0 0-1.46-.85L9.31 2ZM8 10.5A2.5 2.5 0 1 1 8 5.5a2.5 2.5 0 0 1 0 5Z"/>
         </svg>
       </button>
     </header>
 
-    <section class="cl-status" id="status-row">
+    <section class="cl-status" id="status-row" role="status" aria-live="polite">
       <span class="cl-dot" id="status-dot" data-state="loading"></span>
       <span id="status-text">Extracting…</span>
     </section>
@@ -29,22 +29,31 @@
       <div><span class="cl-label">≈ Tokens</span> <strong id="m-tokens">—</strong></div>
     </section>
 
-    <section class="cl-warning" id="warning-row" hidden></section>
-
-    <section class="cl-preview-wrap">
-      <div class="cl-preview" id="preview" aria-live="polite"></div>
-    </section>
-
-    <section class="cl-actions">
-      <button id="btn-md" class="cl-btn cl-btn-primary" disabled>
+    <section class="cl-actions" aria-label="Save extraction">
+      <button id="btn-md" class="cl-btn cl-btn-primary" disabled
+              title="Extracting page — buttons enable when complete">
         <span class="cl-btn-label">Download .md</span>
       </button>
-      <button id="btn-json" class="cl-btn" disabled>Download .json</button>
-      <button id="btn-copy" class="cl-btn" disabled>Copy</button>
+      <button id="btn-json" class="cl-btn" disabled
+              title="Extracting page — buttons enable when complete">Download .json</button>
+      <button id="btn-copy" class="cl-btn" disabled
+              title="Extracting page — buttons enable when complete">Copy</button>
     </section>
 
+    <section class="cl-warning" id="warning-row" role="alert" aria-live="assertive" hidden></section>
+
+    <details class="cl-preview-disclosure" id="preview-disclosure">
+      <summary class="cl-preview-summary">
+        <span class="cl-preview-summary-label">Preview</span>
+        <span class="cl-preview-summary-hint">first 600 chars</span>
+      </summary>
+      <div class="cl-preview-wrap">
+        <div class="cl-preview" id="preview" aria-label="Extracted content preview"></div>
+      </div>
+    </details>
+
     <footer class="cl-footer">
-      <span>Shortcut: <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></span>
+      <span class="cl-footer-shortcut">Press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> to skip this popup next time.</span>
       <a href="#" id="shortcut-link">Customize</a>
     </footer>
 
