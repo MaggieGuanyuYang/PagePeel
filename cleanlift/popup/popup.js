@@ -57,9 +57,21 @@ const STRIPPED_LABELS = {
   figures: 'Images / figures'
 };
 
+const HIDDEN_REASON_LABELS = {
+  'css-hidden': '↳ display:none / visibility:hidden',
+  'display-none': '↳ display:none',
+  'visibility-hidden': '↳ visibility:hidden',
+  'aria-hidden': '↳ aria-hidden, no text',
+  'unknown': '↳ unknown'
+};
+
 function renderStripped(stripped) {
   if (!stripped || !els.strippedDisclosure) return;
-  const total = Object.values(stripped).reduce((a, b) => a + (b || 0), 0);
+  // Sum top-level buckets only — hiddenByReason is a sub-breakdown of `hidden`.
+  const numericBuckets = Object.entries(stripped)
+    .filter(([k, v]) => typeof v === 'number')
+    .map(([, v]) => v);
+  const total = numericBuckets.reduce((a, b) => a + b, 0);
   if (!total) {
     els.strippedDisclosure.hidden = true;
     return;
@@ -79,6 +91,21 @@ function renderStripped(stripped) {
     right.textContent = String(n);
     li.append(left, right);
     list.appendChild(li);
+    // Sub-breakdown for hidden elements so a surprising 300+ count can be
+    // diagnosed at a glance.
+    if (key === 'hidden' && stripped.hiddenByReason) {
+      for (const [reason, count] of Object.entries(stripped.hiddenByReason)) {
+        if (!count) continue;
+        const sub = document.createElement('li');
+        sub.className = 'cl-stripped-sub';
+        const subLeft = document.createElement('span');
+        subLeft.textContent = HIDDEN_REASON_LABELS[reason] || ('↳ ' + reason);
+        const subRight = document.createElement('span');
+        subRight.textContent = String(count);
+        sub.append(subLeft, subRight);
+        list.appendChild(sub);
+      }
+    }
   }
 }
 

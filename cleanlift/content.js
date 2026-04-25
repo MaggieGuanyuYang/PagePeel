@@ -58,24 +58,22 @@
     return false;
   }
 
-  function isVisuallyHidden(el) {
-    // Prefer Element.checkVisibility() (Chrome 105+, manifest requires 114).
-    // The native call is engine-batched and a couple orders of magnitude
-    // faster than getComputedStyle on long pages — the previous per-element
-    // getComputedStyle scan was the dominant cost on 5k-element course pages.
+  // Returns null when the element is visible to a sighted user, or a reason
+  // string when it should be stripped. Reason codes feed into stripped.hiddenByReason
+  // so the popup disclosure can show *why* something was removed.
+  //
+  // Conservative defaults: we DON'T pass contentVisibilityAuto (a render
+  // optimization, not a hide) or checkOpacity (catches mid-animation
+  // elements) to checkVisibility — both produce false positives that drop
+  // user-visible content. We accept some hidden-chrome leakage in exchange.
+  function visibilityState(el) {
     if (typeof el.checkVisibility === 'function') {
-      const visible = el.checkVisibility({
-        checkOpacity: true,
-        checkVisibilityCSS: true,
-        contentVisibilityAuto: true
-      });
-      if (!visible) return true;
+      if (!el.checkVisibility({ checkVisibilityCSS: true })) return 'css-hidden';
     } else {
       const style = getComputedStyle(el);
       if (style) {
-        if (style.display === 'none') return true;
-        if (style.visibility === 'hidden' || style.visibility === 'collapse') return true;
-        if (style.opacity === '0' && style.pointerEvents === 'none') return true;
+        if (style.display === 'none') return 'display-none';
+        if (style.visibility === 'hidden' || style.visibility === 'collapse') return 'visibility-hidden';
       }
     }
     // aria-hidden=true: only treat as hidden when the element has no visible
@@ -83,9 +81,13 @@
     // assistive tech), so dropping it can lose icon-prefixed labels.
     if (el.getAttribute('aria-hidden') === 'true') {
       const text = (el.textContent || '').trim();
-      if (!text) return true;
+      if (!text) return 'aria-hidden';
     }
-    return false;
+    return null;
+  }
+
+  function isVisuallyHidden(el) {
+    return visibilityState(el) !== null;
   }
 
   function buildBoilerplatePatterns(extra) {
@@ -285,7 +287,7 @@
   }
 
   function gatherHiddenLiveElements(root) {
-    const hidden = [];
+    const hidden = []; // [{el, reason}]
     const stack = [{ el: root, depth: 0 }];
     while (stack.length) {
       const { el, depth } = stack.pop();
@@ -293,8 +295,10 @@
       for (let i = 0; i < children.length; i++) {
         const child = children[i];
         const childDepth = depth + (isAccordionLike(child) ? 1 : 0);
-        if (childDepth === 0 && isVisuallyHidden(child)) {
-          hidden.push(child);
+        let reason = null;
+        if (childDepth === 0) reason = visibilityState(child);
+        if (reason) {
+          hidden.push({ el: child, reason });
         } else {
           stack.push({ el: child, depth: childDepth });
         }
@@ -926,7 +930,9 @@
     }
 
     // Compute hidden + keep info from live DOM (read-only — no mutation).
-    const hiddenLive = new Set(gatherHiddenLiveElements(liveBody));
+    const hiddenLiveEntries = gatherHiddenLiveElements(liveBody);
+    const hiddenLive = new Set(hiddenLiveEntries.map(h => h.el));
+    const hiddenReasonByLive = new Map(hiddenLiveEntries.map(h => [h.el, h.reason]));
     const keepLive = buildKeepSet(liveBody, settings.customKeepSelectors);
 
     const clone = liveBody.cloneNode(true);
@@ -951,9 +957,12 @@
 
     // Tracks counts of stripped elements per category, surfaced via
     // meta.stripped so the researcher can audit what disappeared without
-    // diffing markdown output by eye.
+    // diffing markdown output by eye. hiddenByReason breaks out display:none
+    // vs visibility:hidden vs aria-hidden so a surprising 300+ count can be
+    // diagnosed without re-instrumenting the extension.
     const stripped = {
       hidden: 0,
+      hiddenByReason: {},
       tagsAlways: 0,
       tagsOutsideContent: 0,
       ariaRoles: 0,
@@ -970,10 +979,14 @@
       return true;
     }
 
-    // Strip hidden elements
+    // Strip hidden elements, recording per-reason counts.
     for (const liveEl of hiddenLive) {
       const cloneEl = liveToClone.get(liveEl);
-      if (cloneEl) safeRemove(cloneEl, 'hidden');
+      if (!cloneEl) continue;
+      if (safeRemove(cloneEl, 'hidden')) {
+        const reason = hiddenReasonByLive.get(liveEl) || 'unknown';
+        stripped.hiddenByReason[reason] = (stripped.hiddenByReason[reason] || 0) + 1;
+      }
     }
 
     // Strip unconditional tags (script/style/noscript/iframe).
