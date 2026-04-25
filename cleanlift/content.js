@@ -59,11 +59,25 @@
   }
 
   function isVisuallyHidden(el) {
-    const style = getComputedStyle(el);
-    if (!style) return false;
-    if (style.display === 'none') return true;
-    if (style.visibility === 'hidden' || style.visibility === 'collapse') return true;
-    if (style.opacity === '0' && style.pointerEvents === 'none') return true;
+    // Prefer Element.checkVisibility() (Chrome 105+, manifest requires 114).
+    // The native call is engine-batched and a couple orders of magnitude
+    // faster than getComputedStyle on long pages — the previous per-element
+    // getComputedStyle scan was the dominant cost on 5k-element course pages.
+    if (typeof el.checkVisibility === 'function') {
+      const visible = el.checkVisibility({
+        checkOpacity: true,
+        checkVisibilityCSS: true,
+        contentVisibilityAuto: true
+      });
+      if (!visible) return true;
+    } else {
+      const style = getComputedStyle(el);
+      if (style) {
+        if (style.display === 'none') return true;
+        if (style.visibility === 'hidden' || style.visibility === 'collapse') return true;
+        if (style.opacity === '0' && style.pointerEvents === 'none') return true;
+      }
+    }
     // aria-hidden=true: only treat as hidden when the element has no visible
     // text. Sighted users still see aria-hidden text (it's only invisible to
     // assistive tech), so dropping it can lose icon-prefixed labels.
@@ -210,6 +224,64 @@
       }
     }
     return { cloneToLive, liveToClone };
+  }
+
+  // Inline same-origin iframe bodies into the clone before stripping <iframe>.
+  // PRD calls out fee tables in iframes on some Russell-Group university
+  // pages; without this, the user-visible content is silently dropped.
+  // Cross-origin frames throw on contentDocument access — caught and skipped.
+  function inlineSameOriginIframes(clone, liveBody, liveToClone) {
+    const counts = { inlined: 0, blocked: 0 };
+    const iframes = liveBody.querySelectorAll('iframe');
+    for (const liveIf of iframes) {
+      let body = null;
+      try {
+        body = liveIf.contentDocument && liveIf.contentDocument.body;
+      } catch (_e) {
+        counts.blocked++;
+        continue;
+      }
+      if (!body) {
+        counts.blocked++;
+        continue;
+      }
+      const cloneIf = liveToClone.get(liveIf);
+      if (!cloneIf || !cloneIf.parentNode) continue;
+      // Setting innerHTML on a detached element doesn't execute scripts,
+      // and the strip pipeline removes <script> right after.
+      const wrapper = clone.ownerDocument.createElement('div');
+      wrapper.setAttribute('data-cleanlift-iframe', liveIf.src || '');
+      wrapper.innerHTML = body.innerHTML;
+      cloneIf.replaceWith(wrapper);
+      counts.inlined++;
+    }
+    return counts;
+  }
+
+  // Inline open shadow roots so content rendered via shadow DOM (Webflow
+  // components, custom elements, some commercial training templates)
+  // survives extraction. Closed shadow roots are unreachable; we count
+  // them so the user can see whether content might be missing.
+  function inlineOpenShadowRoots(clone, liveBody, liveToClone) {
+    const counts = { open: 0, closed: 0 };
+    const stack = [liveBody];
+    while (stack.length) {
+      const el = stack.pop();
+      if (el.shadowRoot) {
+        counts.open++;
+        const cloneEl = liveToClone.get(el);
+        if (cloneEl) {
+          const wrapper = clone.ownerDocument.createElement('div');
+          wrapper.setAttribute('data-cleanlift-shadow', el.tagName.toLowerCase());
+          wrapper.innerHTML = el.shadowRoot.innerHTML;
+          cloneEl.appendChild(wrapper);
+        }
+        // Recurse into shadowRoot children (rare but real: nested shadow DOM)
+        for (const child of el.shadowRoot.children) stack.push(child);
+      }
+      for (const child of el.children) stack.push(child);
+    }
+    return counts;
   }
 
   function gatherHiddenLiveElements(root) {
@@ -821,6 +893,13 @@
     const clone = liveBody.cloneNode(true);
     const { cloneToLive, liveToClone } = buildCloneMaps(liveBody, clone);
 
+    // Inline same-origin iframe bodies and open shadow-root content into the
+    // clone before stripping. This recovers content that the user can see
+    // (fee-table iframes on university pages, Webflow shadow-DOM components)
+    // but that cloneNode would otherwise skip.
+    const iframeCounts = inlineSameOriginIframes(clone, liveBody, liveToClone);
+    const shadowCounts = inlineOpenShadowRoots(clone, liveBody, liveToClone);
+
     function isKept(el) {
       let cur = el;
       while (cur && cur.nodeType === Node.ELEMENT_NODE) {
@@ -963,6 +1042,24 @@
     }
     if (jsonError) {
       warnings.push({ kind: 'json-error', message: 'JSON build failed: ' + jsonError });
+    }
+    if (iframeCounts.blocked) {
+      warnings.push({
+        kind: 'iframe-blocked',
+        message: iframeCounts.blocked + ' cross-origin iframe(s) could not be read — content inside may be missing.'
+      });
+    }
+    if (iframeCounts.inlined) {
+      warnings.push({
+        kind: 'iframe-inlined',
+        message: iframeCounts.inlined + ' same-origin iframe(s) inlined into the extraction.'
+      });
+    }
+    if (shadowCounts.open) {
+      warnings.push({
+        kind: 'shadow-open',
+        message: shadowCounts.open + ' open shadow root(s) inlined into the extraction.'
+      });
     }
 
     const collapsedCount = countLazyAccordions(document.body);
