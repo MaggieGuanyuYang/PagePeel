@@ -2,28 +2,48 @@
   if (window.__cleanliftReady) return;
   window.__cleanliftReady = true;
 
-  const STRIP_TAGS = [
-    'script', 'style', 'noscript', 'iframe',
-    'nav', 'header', 'footer'
-  ];
+  const STRIP_TAGS_ALWAYS = ['script', 'style', 'noscript', 'iframe'];
+  // header/footer/nav are stripped only outside <article>/<main>: HTML5 allows
+  // <header>/<footer> inside sectioning content as section headers, where they
+  // hold real body content (module titles, etc.) rather than page chrome.
+  const STRIP_TAGS_OUTSIDE_CONTENT = ['nav', 'header', 'footer'];
 
   const STRIP_ARIA_ROLES = ['navigation', 'banner', 'contentinfo'];
 
-  const BOILERPLATE_PATTERNS = [
-    'nav', 'navbar', 'navigation', 'menu', 'sidebar', 'breadcrumb', 'breadcrumbs',
-    'footer', 'site-footer', 'page-footer', 'sitefooter',
-    'header', 'site-header', 'page-header', 'topbar', 'top-bar',
-    'cookie', 'cookies', 'consent', 'gdpr', 'privacy-banner', 'privacy-notice',
-    'ad', 'ads', 'advert', 'adverts', 'advertisement', 'sponsor', 'sponsored', 'promo',
-    'share', 'social', 'social-share', 'sharing', 'sharing-buttons', 'share-buttons',
-    'comments', 'comment-section', 'disqus', 'commentlist',
-    'related', 'recommended', 'also-bought', 'similar', 'you-may-like', 'youmaylike',
+  // Distinctive whole-token signatures (matched against full class names like
+  // "site-footer", "trust-badges"). A single hit is enough to strip the element.
+  const STRONG_PATTERNS = new Set([
+    'navbar', 'sidebar', 'breadcrumb', 'breadcrumbs',
+    'site-footer', 'page-footer', 'sitefooter',
+    'site-header', 'page-header', 'topbar', 'top-bar', 'top-nav',
+    'cookie-banner', 'cookie-notice', 'cookie-consent', 'consent-banner',
+    'gdpr', 'privacy-banner', 'privacy-notice',
+    'advert', 'adverts', 'advertisement', 'advertising',
+    'social-share', 'sharing-buttons', 'share-buttons', 'social-icons',
+    'comment-section', 'disqus', 'commentlist',
+    'related-posts', 'related-articles', 'related-courses', 'related-content',
+    'recommended-posts', 'also-bought', 'also-like', 'you-may-like', 'youmaylike',
     'testimonial', 'testimonials', 'review-widget', 'trust-pilot', 'trustpilot', 'trust-badges',
-    'newsletter', 'signup', 'subscribe', 'mailing-list', 'mailchimp',
-    'modal', 'popup', 'overlay', 'dialog-backdrop', 'lightbox',
+    'newsletter', 'newsletter-signup', 'mailing-list', 'mailchimp',
+    'dialog-backdrop', 'lightbox',
     'live-chat', 'chatbot', 'chat-widget', 'intercom-launcher', 'zopim', 'tawk',
     'skip-link', 'skip-to-content', 'skip-nav'
-  ];
+  ]);
+
+  // Ambiguous token fragments. Outside of <article>/<main>, a single match
+  // strips. Inside content regions, require ≥2 matches OR a STRONG hit so that
+  // a Bootstrap "card-header" or LearnDash "course-promo" doesn't lose content.
+  const WEAK_TOKENS = new Set([
+    'nav', 'navigation', 'menu',
+    'header', 'footer',
+    'cookie', 'cookies', 'consent',
+    'ad', 'ads', 'sponsor', 'sponsored', 'promo',
+    'share', 'social', 'sharing',
+    'comments',
+    'related', 'recommended', 'similar',
+    'signup', 'subscribe',
+    'modal', 'popup', 'overlay'
+  ]);
 
   const ALLOWLIST_TAGS = new Set(['MAIN', 'ARTICLE', 'SECTION', 'BODY', 'HTML']);
 
@@ -39,42 +59,124 @@
   }
 
   function isVisuallyHidden(el) {
-    if (el.getAttribute('aria-hidden') === 'true') return true;
     const style = getComputedStyle(el);
     if (!style) return false;
     if (style.display === 'none') return true;
     if (style.visibility === 'hidden' || style.visibility === 'collapse') return true;
     if (style.opacity === '0' && style.pointerEvents === 'none') return true;
+    // aria-hidden=true: only treat as hidden when the element has no visible
+    // text. Sighted users still see aria-hidden text (it's only invisible to
+    // assistive tech), so dropping it can lose icon-prefixed labels.
+    if (el.getAttribute('aria-hidden') === 'true') {
+      const text = (el.textContent || '').trim();
+      if (!text) return true;
+    }
     return false;
   }
 
-  function buildBoilerplateSet(extra) {
-    const all = BOILERPLATE_PATTERNS.concat(extra || []);
-    return new Set(all.map(p => p.toLowerCase()));
+  function buildBoilerplatePatterns(extra) {
+    const strong = new Set(STRONG_PATTERNS);
+    const weak = new Set(WEAK_TOKENS);
+    if (extra && extra.length) {
+      for (const raw of extra) {
+        const lc = String(raw).toLowerCase().trim();
+        if (!lc) continue;
+        // Custom patterns are treated as strong by default — the user opted
+        // into them per-site, so we trust their precision.
+        strong.add(lc);
+      }
+    }
+    return { strong, weak };
   }
 
   function tokenize(s) {
     if (!s) return [];
-    // Split camelCase: "siteFooter" → ["site", "Footer"], "URLBox" → ["URL", "Box"]
     const decamel = s
       .replace(/([a-z\d])([A-Z])/g, '$1 $2')
       .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
     return decamel.split(/[\s_\-/]+/).map(t => t.toLowerCase()).filter(Boolean);
   }
 
-  function elementMatchesBoilerplate(el, patternSet) {
+  function elementMatchesBoilerplate(el, patterns) {
     if (ALLOWLIST_TAGS.has(el.tagName)) return false;
-    const tokens = [];
-    if (el.id) tokens.push(...tokenize(el.id));
-    if (el.className && typeof el.className === 'string') {
-      el.className.split(/\s+/).forEach(c => tokens.push(...tokenize(c)));
-    }
+
+    const wholeTokens = [];
+    const splitTokens = [];
+
+    const addSource = (raw) => {
+      if (!raw) return;
+      const lc = String(raw).toLowerCase();
+      if (lc) wholeTokens.push(lc);
+      String(raw).split(/\s+/).forEach(c => {
+        const cl = c.toLowerCase();
+        if (cl) wholeTokens.push(cl);
+        splitTokens.push(...tokenize(c));
+      });
+    };
+
+    if (el.id) addSource(el.id);
+    if (el.className && typeof el.className === 'string') addSource(el.className);
     const dc = el.getAttribute && el.getAttribute('data-component');
-    if (dc) tokens.push(...tokenize(dc));
-    for (const t of tokens) {
-      if (patternSet.has(t)) return true;
+    if (dc) addSource(dc);
+
+    let strongHit = false;
+    for (const t of wholeTokens) {
+      if (patterns.strong.has(t)) { strongHit = true; break; }
     }
-    return false;
+    if (strongHit) return true;
+
+    let weakCount = 0;
+    for (const t of splitTokens) {
+      if (patterns.weak.has(t)) weakCount++;
+    }
+    if (!weakCount) return false;
+
+    const insideContent = el.closest && el.closest('article, main');
+    return insideContent ? weakCount >= 2 : weakCount >= 1;
+  }
+
+  function promoteHeadingLikeElements(clone) {
+    // Promote elements that are visually/semantically headings but use a
+    // <div>/<span> tag. Conservative: only promote on explicit signals —
+    // aria role="heading", or class tokens like "heading-large", "section-title"
+    // — never on font-size heuristics, which would create false positives.
+    const HEADING_CLASS_RE = /(?:^|[\s_-])(heading|headline|section-title|page-title|course-title|module-title|widget-title|entry-title|block-title)(?:[\s_-]|$)/i;
+
+    const candidates = clone.querySelectorAll(
+      '[role="heading"], div, span, p, header'
+    );
+    for (const el of candidates) {
+      if (/^H[1-6]$/.test(el.tagName)) continue;
+      // Skip elements containing block-level children — they aren't leaf headings.
+      if (el.querySelector('h1,h2,h3,h4,h5,h6,p,ul,ol,table,blockquote,article,section,div')) continue;
+
+      let level = 0;
+      const role = el.getAttribute && el.getAttribute('role');
+      if (role === 'heading') {
+        const aria = parseInt(el.getAttribute('aria-level') || '', 10);
+        if (aria >= 1 && aria <= 6) level = aria;
+        else level = 3;
+      } else {
+        const cls = (el.className && typeof el.className === 'string') ? el.className : '';
+        if (HEADING_CLASS_RE.test(cls)) {
+          // Try to infer level from class: h1/h2/.../h6 fragment, or "large"/"xl"/"section".
+          const m = cls.match(/(?:^|[\s_-])h([1-6])(?:[\s_-]|$)/i);
+          if (m) level = parseInt(m[1], 10);
+          else if (/section-title|page-title|course-title/i.test(cls)) level = 2;
+          else if (/module-title|widget-title|entry-title|block-title/i.test(cls)) level = 3;
+          else if (/large|xl|hero/i.test(cls)) level = 2;
+          else level = 3;
+        }
+      }
+      if (!level) continue;
+
+      const text = (el.textContent || '').trim();
+      if (!text || text.length > 200) continue;
+
+      const newH = clone.ownerDocument.createElement('h' + level);
+      newH.textContent = text;
+      el.replaceWith(newH);
+    }
   }
 
   function buildKeepSet(root, selector) {
@@ -146,18 +248,25 @@
   }
 
   function dropEmptyContainers(clone, isKept) {
-    let changed = true;
-    let passes = 0;
-    while (changed && passes < 4) {
-      changed = false;
-      passes++;
-      const candidates = clone.querySelectorAll('div, section, aside, span');
-      for (const el of candidates) {
-        if (isKept && isKept(el)) continue;
-        if (el.children.length === 0 && !el.textContent.trim()) {
-          el.remove();
-          changed = true;
-        }
+    // Bottom-up post-order traversal: children are evaluated before parents,
+    // so deeply-nested wrapper chains (Webflow/Squarespace) collapse in one
+    // pass without the previous 4-pass cap leaving residue.
+    const stack = [clone];
+    const ordered = [];
+    while (stack.length) {
+      const el = stack.pop();
+      ordered.push(el);
+      for (let i = 0; i < el.children.length; i++) stack.push(el.children[i]);
+    }
+    for (let i = ordered.length - 1; i >= 0; i--) {
+      const el = ordered[i];
+      if (el === clone) continue;
+      if (!el.parentNode) continue;
+      const tag = el.tagName;
+      if (tag !== 'DIV' && tag !== 'SECTION' && tag !== 'ASIDE' && tag !== 'SPAN') continue;
+      if (isKept && isKept(el)) continue;
+      if (el.children.length === 0 && !el.textContent.trim()) {
+        el.parentNode.removeChild(el);
       }
     }
   }
@@ -584,8 +693,17 @@
       if (cloneEl) safeRemove(cloneEl);
     }
 
-    // Strip by tag
-    STRIP_TAGS.forEach(tag => clone.querySelectorAll(tag).forEach(safeRemove));
+    // Strip unconditional tags (script/style/noscript/iframe).
+    STRIP_TAGS_ALWAYS.forEach(tag => clone.querySelectorAll(tag).forEach(safeRemove));
+
+    // Strip header/footer/nav only when outside <article>/<main>. HTML5 allows
+    // these tags inside sectioning content as section headers, where they
+    // carry real body content (e.g. WordPress block themes' .entry-header).
+    STRIP_TAGS_OUTSIDE_CONTENT.forEach(tag => {
+      clone.querySelectorAll(tag).forEach(el => {
+        if (!el.closest('article, main')) safeRemove(el);
+      });
+    });
 
     // Strip by ARIA role
     STRIP_ARIA_ROLES.forEach(role => clone.querySelectorAll('[role="' + role + '"]').forEach(safeRemove));
@@ -593,28 +711,44 @@
     // Strip by class/id pattern
     const customPatterns = (settings.customStripSelectors || '')
       .split(/[,\n]/).map(s => s.trim()).filter(s => s && !s.startsWith('.') && !s.startsWith('#') && !s.startsWith('['));
-    const patternSet = buildBoilerplateSet(customPatterns);
+    const patterns = buildBoilerplatePatterns(customPatterns);
     const candidates = Array.from(clone.querySelectorAll('div, section, aside, ul, ol, span, button, form, dialog'));
     for (const el of candidates) {
-      if (elementMatchesBoilerplate(el, patternSet)) safeRemove(el);
+      if (elementMatchesBoilerplate(el, patterns)) safeRemove(el);
     }
 
-    // Strip by user CSS selectors (those that ARE valid CSS — start with . # [ or contain space/combinator)
+    // Strip by user CSS selectors. Each selector runs in its own try/catch so
+    // a single invalid entry doesn't silently drop the user's whole config.
     const customCssSelectors = (settings.customStripSelectors || '')
       .split(/[,\n]/).map(s => s.trim())
       .filter(s => s && (s.startsWith('.') || s.startsWith('#') || s.startsWith('[') || /[\s>+~]/.test(s)));
-    if (customCssSelectors.length) {
+    const invalidSelectors = [];
+    for (const sel of customCssSelectors) {
       try {
-        clone.querySelectorAll(customCssSelectors.join(',')).forEach(safeRemove);
-      } catch (_e) { /* invalid selector */ }
+        clone.querySelectorAll(sel).forEach(safeRemove);
+      } catch (_e) {
+        invalidSelectors.push(sel);
+      }
     }
 
-    // Resolve URLs
+    // Resolve URLs (with protocol allowlist; see resolveUrls).
     resolveUrls(clone, document.baseURI);
 
-    // Optional: strip images entirely
+    // Optional: strip images. Preserve <figcaption> text — it's body content
+    // even when the image itself is dropped.
     if (!settings.includeImages) {
-      clone.querySelectorAll('img, picture, figure').forEach(safeRemove);
+      clone.querySelectorAll('figure').forEach(fig => {
+        if (isKept(fig)) return;
+        const cap = fig.querySelector('figcaption');
+        if (cap && cap.textContent.trim()) {
+          const p = document.createElement('p');
+          p.textContent = cap.textContent.trim();
+          fig.replaceWith(p);
+        } else {
+          safeRemove(fig);
+        }
+      });
+      clone.querySelectorAll('img, picture').forEach(safeRemove);
     }
 
     // Optional: replace links with text
@@ -626,6 +760,10 @@
         a.replaceWith(span);
       });
     }
+
+    // Promote visually-styled heading divs/spans before block emission so
+    // both Markdown (Turndown) and JSON paths see them as real headings.
+    promoteHeadingLikeElements(clone);
 
     // Drop empties left over
     dropEmptyContainers(clone, isKept);
@@ -653,6 +791,14 @@
     const date = now.toISOString().slice(0, 10);
     const timestamp = now.toISOString();
 
+    const warnings = [];
+    if (invalidSelectors.length) {
+      warnings.push({
+        kind: 'invalid-selector',
+        message: 'Custom strip selector ignored (invalid CSS): ' + invalidSelectors.join(', ')
+      });
+    }
+
     const meta = {
       url: location.href,
       domain,
@@ -664,7 +810,8 @@
       tokens,
       tokenBadge: formatTokenBadge(tokens),
       lazyAccordionsSuspected: checkLazyAccordions(document.body),
-      readyState: document.readyState
+      readyState: document.readyState,
+      warnings
     };
 
     let markdownOut = markdown;
