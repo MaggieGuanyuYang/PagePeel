@@ -193,7 +193,7 @@ async function runExtraction(tabId, settings) {
 
 async function setBadge(tabId, text) {
   try {
-    await chrome.action.setBadgeBackgroundColor({ color: '#4B46DC', tabId });
+    await chrome.action.setBadgeBackgroundColor({ color: '#EB548E', tabId });
     await chrome.action.setBadgeText({ text: text || '', tabId });
   } catch (_e) {}
 }

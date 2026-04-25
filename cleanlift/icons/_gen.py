@@ -1,8 +1,9 @@
 """Generate brand icons for CleanLift at 16/32/48/128 px using stdlib only.
 
-Design: indigo rounded square; inside, two stacked white "page" rectangles —
-the back page tilted slightly, suggesting a lift / extraction motion. A small
-accent bar (lighter indigo) in the foreground page suggests text content.
+Design: deep-purple rounded square (brand-deep #27153e); inside, two stacked
+cream "page" rectangles, the back tinted teal (brand-teal #76c8c2) suggesting
+a lift / extraction motion. Three text bars on the foreground page in pink
+(brand-pink #eb548e) — the brand's signature accent.
 """
 
 import math
@@ -11,11 +12,11 @@ import zlib
 from pathlib import Path
 
 
-BG = (75, 70, 220, 255)        # indigo
-BG_DARK = (53, 49, 165, 255)   # deeper indigo for shadow
-PAGE = (255, 255, 255, 255)
-PAGE_BACK = (210, 215, 255, 255)  # tinted page behind
-ACCENT = (130, 145, 255, 255)
+# Brand palette — keep aligned with cleanlift/popup/popup.css :root tokens.
+BG = (39, 21, 62, 255)            # #27153e brand-deep
+PAGE = (254, 251, 255, 255)       # #fefbff brand-cream
+PAGE_BACK = (118, 200, 194, 255)  # #76c8c2 brand-teal — tinted back page
+ACCENT = (235, 84, 142, 255)      # #eb548e brand-pink — text bars
 TRANSPARENT = (0, 0, 0, 0)
 
 

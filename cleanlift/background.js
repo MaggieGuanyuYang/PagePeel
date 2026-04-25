@@ -110,7 +110,9 @@ async function downloadText(text, filename, mime) {
 
 async function setBadge(tabId, text) {
   try {
-    await chrome.action.setBadgeBackgroundColor({ color: '#4B46DC', tabId });
+    // Brand pink (#eb548e) on the toolbar badge so the success state aligns
+    // with the popup's primary action colour.
+    await chrome.action.setBadgeBackgroundColor({ color: '#EB548E', tabId });
     await chrome.action.setBadgeTextColor({ color: '#FFFFFF', tabId });
     await chrome.action.setBadgeText({ text: text || '', tabId });
   } catch (_e) {
