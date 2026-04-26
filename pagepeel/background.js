@@ -3,6 +3,7 @@ const DEFAULT_SETTINGS = {
   includeFrontmatter: true,
   includeLinks: true,
   includeImages: true,
+  theme: 'auto',
   customStripSelectors: '',
   customKeepSelectors: '',
   perDomainRules: '',
@@ -40,6 +41,9 @@ async function getSettings() {
   }
   if (!['markdown', 'json', 'both'].includes(merged.outputFormat)) {
     merged.outputFormat = 'markdown';
+  }
+  if (!['auto', 'light', 'dark'].includes(merged.theme)) {
+    merged.theme = 'auto';
   }
   return merged;
 }

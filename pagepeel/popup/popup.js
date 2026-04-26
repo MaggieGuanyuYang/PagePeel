@@ -3,11 +3,28 @@ const DEFAULT_SETTINGS = {
   includeFrontmatter: true,
   includeLinks: true,
   includeImages: true,
+  theme: 'auto',
   customStripSelectors: '',
   customKeepSelectors: '',
   perDomainRules: '',
   filenameTemplate: '{title}_{domain}_{date}_{hash}'
 };
+
+// Stamp data-theme on <html> as early as possible so the popup paints in
+// the correct theme on first frame. Reads chrome.storage.sync (which the
+// popup already calls during init); the resolved theme is applied before
+// any UI mounts.
+function applyTheme(setting) {
+  let effective = setting || 'auto';
+  if (effective === 'auto') {
+    effective = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  document.documentElement.dataset.theme = effective;
+}
+// Best-effort early apply so we don't paint the wrong theme before init() runs.
+try {
+  chrome.storage.sync.get({ theme: 'auto' }, (s) => applyTheme((s && s.theme) || 'auto'));
+} catch (_e) {}
 
 const RESTRICTED_PROTOCOLS = ['chrome:', 'chrome-extension:', 'edge:', 'about:', 'view-source:', 'devtools:', 'chrome-search:'];
 

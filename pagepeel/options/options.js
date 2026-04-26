@@ -3,6 +3,8 @@ const DEFAULT_SETTINGS = {
   includeFrontmatter: true,
   includeLinks: true,
   includeImages: true,
+  // 'auto' follows the OS appearance; 'light' / 'dark' force the choice.
+  theme: 'auto',
   // Power-user selector fields are no longer surfaced in the options UI but
   // remain in DEFAULT_SETTINGS so the content script's settings merge stays
   // shape-compatible with stored records from earlier versions.
@@ -20,10 +22,22 @@ const FIELDS = [
   'includeFrontmatter',
   'includeLinks',
   'includeImages',
+  'theme',
   'filenameTemplate'
 ];
 
 const WELCOME_KEY = 'pagepeel:welcomeDismissed';
+
+// Resolves the user's Theme setting against the OS preference and stamps
+// data-theme on the root element. Called on load and whenever the setting
+// changes so the options page recolours immediately on selection.
+function applyTheme(setting) {
+  let effective = setting || 'auto';
+  if (effective === 'auto') {
+    effective = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  document.documentElement.dataset.theme = effective;
+}
 
 const $ = (id) => document.getElementById(id);
 
@@ -73,6 +87,7 @@ async function loadSettings() {
   const stored = await chrome.storage.sync.get(DEFAULT_SETTINGS);
   const merged = Object.assign({}, DEFAULT_SETTINGS, stored);
   FIELDS.forEach(f => setValue(f, merged[f]));
+  applyTheme(merged.theme);
   lastSavedSnapshot = snapshot();
   dirty = false;
 }
@@ -85,6 +100,7 @@ async function saveSettings() {
     setValue('filenameTemplate', data.filenameTemplate);
   }
   await chrome.storage.sync.set(data);
+  applyTheme(data.theme);
   lastSavedSnapshot = JSON.stringify(data);
   dirty = false;
   setStatus('Saved.', 'saved');
@@ -99,6 +115,7 @@ async function resetSettings() {
   }
   await chrome.storage.sync.set(DEFAULT_SETTINGS);
   FIELDS.forEach(f => setValue(f, DEFAULT_SETTINGS[f]));
+  applyTheme(DEFAULT_SETTINGS.theme);
   lastSavedSnapshot = snapshot();
   dirty = false;
   setStatus('Reset to defaults.', 'saved');
@@ -133,6 +150,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     el.addEventListener('blur', () => {
       if (dirty) saveSettings();
     });
+  }
+
+  // Live preview when the theme select changes — apply before save so the
+  // user sees the result instantly without leaving the field.
+  const themeEl = $('theme');
+  if (themeEl) themeEl.addEventListener('change', () => applyTheme(themeEl.value));
+
+  // When theme is "auto", honour live OS appearance flips while the page
+  // is open so toggling System Settings updates the popup immediately.
+  if (window.matchMedia) {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onSystemChange = () => {
+      const current = (themeEl && themeEl.value) || 'auto';
+      if (current === 'auto') applyTheme('auto');
+    };
+    if (mq.addEventListener) mq.addEventListener('change', onSystemChange);
+    else if (mq.addListener) mq.addListener(onSystemChange);
   }
 
   document.addEventListener('keydown', (e) => {

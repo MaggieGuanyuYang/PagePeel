@@ -43,8 +43,10 @@
   --focus-ring: 0 0 0 3px rgba(235, 84, 142, 0.32);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
+/* Dark theme — applied when [data-theme="dark"] is set on <html>.
+   The popup/options JS reads the user's Theme setting on load and stamps
+   the attribute (resolving "auto" against window.matchMedia). */
+:root[data-theme="dark"] {
     /* Neutral dark surface — brand-deep purple is reserved for accent
        moments (text in light mode, focus stripes), not as the dark-mode
        background. Slight warm tilt keeps it from feeling clinical. */
@@ -79,7 +81,6 @@
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 18px rgba(0, 0, 0, 0.45);
     --shadow-cta: 0 6px 22px rgba(235, 84, 142, 0.3), 0 2px 4px rgba(0, 0, 0, 0.35);
     --focus-ring: 0 0 0 3px rgba(235, 84, 142, 0.42);
-  }
 }
 
 * { box-sizing: border-box; }
