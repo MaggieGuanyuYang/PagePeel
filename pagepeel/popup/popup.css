@@ -333,6 +333,22 @@ body[data-state="loading"] { border-left-color: var(--accent); }
   border-left-color: var(--error);
 }
 
+/* Bullet list when there are multiple warnings — makes the "N things to
+   check above" count match what the user can visually count below. */
+.cl-warning-list {
+  margin: 0;
+  padding-left: 20px;
+}
+.cl-warning-list li {
+  margin: 4px 0;
+  line-height: 1.45;
+}
+.cl-warning-list li:first-child { margin-top: 0; }
+.cl-warning-list li:last-child { margin-bottom: 0; }
+.cl-warning-list li::marker {
+  color: var(--warn-edge);
+}
+
 /* ============================================================
    PREVIEW + STRIPPED DISCLOSURES
    ============================================================ */

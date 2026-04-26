@@ -163,6 +163,44 @@ function clearActionTooltips() {
   }
 }
 
+// Renders the warning panel from a list of {severity, message} entries.
+// Entries with severity:'info' (positive disclosures like "iframe inlined")
+// are silently dropped — they're not "things to check", they're confirmation
+// that the tool DID capture content. Multiple genuine warnings render as a
+// bulleted list so users can count them and match them to the CTA subline.
+//
+// The warning <section> is role="alert" aria-live="assertive" (popup.html:50).
+// We use replaceChildren() everywhere here for a single atomic mutation —
+// a textContent='' followed by appendChild produces two mutations and some
+// screen readers either skip the announcement or announce twice.
+function showWarningList(items) {
+  const warnList = (items || []).filter(w => w && w.severity === 'warn');
+  if (!warnList.length) {
+    els.warning.hidden = true;
+    els.warning.replaceChildren();
+    delete els.warning.dataset.kind;
+    return;
+  }
+  els.warning.hidden = false;
+  delete els.warning.dataset.kind;
+  if (warnList.length === 1) {
+    els.warning.replaceChildren(document.createTextNode(warnList[0].message));
+  } else {
+    const ul = document.createElement('ul');
+    ul.className = 'cl-warning-list';
+    for (const w of warnList) {
+      const li = document.createElement('li');
+      li.textContent = w.message;
+      ul.appendChild(li);
+    }
+    els.warning.replaceChildren(ul);
+  }
+}
+
+// Kinds in result.meta.warnings that are positive disclosures (we DID capture
+// content, here's the trace), not warnings the user should act on.
+const POSITIVE_WARNING_KINDS = new Set(['iframe-inlined', 'shadow-open']);
+
 // Kept as a thin alias for legacy callers below.
 function isRestricted(url) { return isRestrictedUrl(url); }
 
@@ -316,6 +354,11 @@ async function init() {
 
   extracted = { ...result, tabId: tab.id };
 
+  // Each entry is {severity: 'warn' | 'info', message, kind}. Only severity
+  // 'warn' counts toward the "N things to check" verdict and the warning
+  // panel; 'info' entries are positive disclosures (e.g. "iframe inlined")
+  // — recorded for the JSONL log via meta.warnings, never surfaced as
+  // something the user has to act on.
   const warnings = [];
   let statusState = 'ok';
   let statusText = 'Ready.';
@@ -323,14 +366,30 @@ async function init() {
   if (result.meta.readyState && result.meta.readyState !== 'complete') {
     statusState = 'warn';
     statusText = 'Page still loading.';
-    warnings.push('This page hasn\'t finished loading. Some content may be missing — wait for the page to fully load, then click the icon again.');
+    warnings.push({
+      kind: 'not-ready',
+      severity: 'warn',
+      message: "This page hasn't finished loading. Some content may be missing — wait for the page to fully load, then click the icon again."
+    });
   }
   if (result.meta.lazyAccordionsSuspected) {
     if (statusState === 'ok') { statusState = 'warn'; statusText = 'Collapsed sections detected.'; }
-    warnings.push('This page has collapsed sections (e.g. expandable details, FAQ accordions). If the content inside them matters, click to open them first, then extract again.');
+    warnings.push({
+      kind: 'collapsed',
+      severity: 'warn',
+      message: 'This page has collapsed sections (e.g. expandable details, FAQ accordions). If the content inside them matters, click to open them first, then extract again.'
+    });
   }
   if (Array.isArray(result.meta.warnings)) {
-    for (const w of result.meta.warnings) warnings.push(w.message || String(w));
+    for (const w of result.meta.warnings) {
+      const kind = w.kind || 'unknown';
+      // Surface unlabelled warnings to the dev console so the producer
+      // can be tracked down — the popup will still display them as warns
+      // (fail-loud is the safer default).
+      if (kind === 'unknown') console.warn('PagePeel: warning without kind label', w);
+      const severity = POSITIVE_WARNING_KINDS.has(kind) ? 'info' : 'warn';
+      warnings.push({ kind, severity, message: w.message || String(w) });
+    }
     if (result.meta.warnings.some(w => w.kind === 'markdown-error' || w.kind === 'json-error')) {
       statusState = 'warn';
       statusText = 'Extraction had errors.';
@@ -338,21 +397,13 @@ async function init() {
   }
 
   setStatus(statusState, statusText);
-  // CTA subline: surfaces the word count plus a per-extraction trust
-  // verdict — "ready to save" / "1 thing to check" — at the moment the
-  // user is deciding whether to commit. Implements feedback-on-outcome
-  // (BCT 2.7) directly on the action surface, so the user doesn't have
-  // to expand the "What was removed" disclosure to know whether the
-  // current extraction is clean.
+  // CTA subline: word count only. The earlier "ready to save" / "N things
+  // to check above" verdict pointed in the wrong direction (the warning
+  // panel sits BELOW the CTA, not above) and added noise on top of the
+  // status row + warning panel that already convey state.
   if (els.ctaSub) {
     els.ctaSub.hidden = false;
-    const wordsLabel = formatNumber(result.meta.wordCount) + ' words';
-    const checkCount = warnings.length;
-    els.ctaSub.textContent = checkCount === 0
-      ? wordsLabel + ' · ready to save'
-      : wordsLabel + (checkCount === 1
-          ? ' · 1 thing to check above'
-          : ' · ' + checkCount + ' things to check above');
+    els.ctaSub.textContent = formatNumber(result.meta.wordCount) + ' words';
   }
   // Full numeric breakdown lives inside the "What was removed" disclosure
   // — present but not headline.
@@ -374,7 +425,7 @@ async function init() {
   if (!result.markdown) els.btnCopy.dataset.disabledReason = 'Nothing to copy — markdown unavailable.';
   clearActionTooltips();
 
-  if (warnings.length) showWarning(warnings.join(' '));
+  showWarningList(warnings);
   renderStripped(result.meta.stripped);
 
   // Focus the primary action button so Enter triggers Download .md without
