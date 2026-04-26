@@ -423,9 +423,11 @@ els.openOptions.addEventListener('click', () => {
   chrome.runtime.openOptionsPage();
 });
 
-els.shortcutLink.addEventListener('click', (e) => {
-  e.preventDefault();
-  chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
-});
+if (els.shortcutLink) {
+  els.shortcutLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
+  });
+}
 
 init();
