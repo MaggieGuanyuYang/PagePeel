@@ -35,23 +35,25 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1c0d2e;
-    --surface: #2c1a4a;
-    --surface-soft: #34204e;
-    --border: #4a3866;
-    --border-strong: #6a5588;
+    /* Neutral dark surface — brand-deep purple is reserved for foreground
+       use (text), not as the dark-mode background. */
+    --bg: #131316;
+    --surface: #1f1f23;
+    --surface-soft: #28282d;
+    --border: #383840;
+    --border-strong: #55555f;
     --fg: var(--brand-cream);
-    --fg-muted: #c4b5d6;
+    --fg-muted: #c0c0c0;
     --accent: var(--brand-pink);
     --accent-hover: #f071a4;
     --accent-press: #ff90ba;
     --accent-edge: var(--brand-teal);
-    --teal-soft: #2a4a4a;
+    --teal-soft: #1f3635;
     --teal-deep: #8edcd6;
     --success: #8edcd6;
-    --warn-fg: #ffd991;
+    --warn-fg: #f0a0c0;
     --error: #ef6464;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 6px 18px rgba(0, 0, 0, 0.3);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 18px rgba(0, 0, 0, 0.45);
     --focus-ring: 0 0 0 3px rgba(235, 84, 142, 0.42);
   }
 }
