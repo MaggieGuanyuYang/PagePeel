@@ -23,21 +23,28 @@
       <span id="status-text">Extracting…</span>
     </section>
 
-    <section class="cl-meta" id="meta-row" hidden>
-      <div><span class="cl-label">Words</span> <strong id="m-words">—</strong></div>
-      <div><span class="cl-label">Chars</span> <strong id="m-chars">—</strong></div>
-      <div><span class="cl-label">≈ Tokens</span> <strong id="m-tokens">—</strong></div>
-    </section>
-
-    <section class="cl-actions" aria-label="Save extraction">
-      <button id="btn-md" class="cl-btn cl-btn-primary" disabled
+    <section class="cl-cta" aria-label="Save extraction">
+      <button id="btn-md" class="cl-cta-btn" disabled
               title="Extracting page — buttons enable when complete">
-        <span class="cl-btn-label">Download .md</span>
+        <span class="cl-cta-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+        </span>
+        <span class="cl-cta-stack">
+          <span class="cl-cta-label">Save as Markdown</span>
+          <span class="cl-cta-sub" id="cta-sub" hidden></span>
+        </span>
       </button>
-      <button id="btn-json" class="cl-btn" disabled
-              title="Extracting page — buttons enable when complete">Download .json</button>
-      <button id="btn-copy" class="cl-btn" disabled
-              title="Extracting page — buttons enable when complete">Copy</button>
+      <div class="cl-cta-secondary">
+        <button id="btn-json" class="cl-btn-link" disabled
+                title="Extracting page — buttons enable when complete">Save as JSON</button>
+        <span class="cl-secondary-sep" aria-hidden="true">·</span>
+        <button id="btn-copy" class="cl-btn-link" disabled
+                title="Extracting page — buttons enable when complete">Copy to clipboard</button>
+      </div>
     </section>
 
     <section class="cl-warning" id="warning-row" role="alert" aria-live="assertive" hidden></section>
@@ -59,6 +66,11 @@
       </summary>
       <div class="cl-preview-wrap">
         <ul class="cl-stripped-list" id="stripped-list"></ul>
+        <div class="cl-detail-stats" id="detail-stats" hidden>
+          <span class="cl-detail-row"><span class="cl-detail-key">Words</span><strong id="m-words">—</strong></span>
+          <span class="cl-detail-row"><span class="cl-detail-key">Characters</span><strong id="m-chars">—</strong></span>
+          <span class="cl-detail-row"><span class="cl-detail-key">Estimated tokens</span><strong id="m-tokens">—</strong></span>
+        </div>
       </div>
     </details>
 

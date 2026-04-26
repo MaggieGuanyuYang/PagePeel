@@ -31,11 +31,13 @@ const $ = (id) => document.getElementById(id);
 const els = {
   statusDot: $('status-dot'),
   statusText: $('status-text'),
-  meta: $('meta-row'),
+  ctaSub: $('cta-sub'),
+  detailStats: $('detail-stats'),
   words: $('m-words'),
   chars: $('m-chars'),
   tokens: $('m-tokens'),
   preview: $('preview'),
+  previewHint: $('preview-hint'),
   warning: $('warning-row'),
   btnMd: $('btn-md'),
   btnJson: $('btn-json'),
@@ -66,23 +68,25 @@ const HIDDEN_REASON_LABELS = {
 };
 
 function renderStripped(stripped) {
-  if (!stripped || !els.strippedDisclosure) return;
-  // Sum top-level buckets only — hiddenByReason is a sub-breakdown of `hidden`.
-  const numericBuckets = Object.entries(stripped)
-    .filter(([k, v]) => typeof v === 'number')
-    .map(([, v]) => v);
-  const total = numericBuckets.reduce((a, b) => a + b, 0);
-  if (!total) {
-    els.strippedDisclosure.hidden = true;
-    return;
-  }
+  if (!els.strippedDisclosure) return;
   els.strippedDisclosure.hidden = false;
-  if (els.strippedSummary) els.strippedSummary.textContent = total + ' elements removed';
+
+  const safe = stripped || {};
+  // Sum top-level buckets only — hiddenByReason is a sub-breakdown of `hidden`.
+  const total = Object.values(safe)
+    .filter(v => typeof v === 'number')
+    .reduce((a, b) => a + b, 0);
+
+  if (els.strippedSummary) {
+    els.strippedSummary.textContent = total
+      ? total + ' elements removed'
+      : 'Nothing removed from this page';
+  }
   const list = els.strippedList;
   if (!list) return;
   list.textContent = '';
   for (const key of Object.keys(STRIPPED_LABELS)) {
-    const n = stripped[key] || 0;
+    const n = safe[key] || 0;
     if (!n) continue;
     const li = document.createElement('li');
     const left = document.createElement('span');
@@ -93,8 +97,8 @@ function renderStripped(stripped) {
     list.appendChild(li);
     // Sub-breakdown for hidden elements so a surprising 300+ count can be
     // diagnosed at a glance.
-    if (key === 'hidden' && stripped.hiddenByReason) {
-      for (const [reason, count] of Object.entries(stripped.hiddenByReason)) {
+    if (key === 'hidden' && safe.hiddenByReason) {
+      for (const [reason, count] of Object.entries(safe.hiddenByReason)) {
         if (!count) continue;
         const sub = document.createElement('li');
         sub.className = 'cl-stripped-sub';
@@ -233,22 +237,33 @@ function logExtraction(entry) {
 }
 
 function flashButton(btn, label) {
-  // Preserve the button's primary/secondary affordance: don't repaint to
-  // green. We stamp a small ✓ icon and a 1px success border, then revert.
+  // The CTA has a richer DOM (icon + stacked label/sub) — swap only the
+  // label text to keep the icon visible during the flash. Link-style
+  // secondary buttons get their textContent replaced wholesale.
   const cls = 'cl-btn-success';
-  const span = document.createElement('span');
-  const tick = document.createElement('span');
-  tick.className = 'cl-btn-icon';
-  tick.textContent = '✓';
-  span.append(tick, document.createTextNode(' ' + label));
-  const original = btn.innerHTML;
-  btn.innerHTML = '';
-  btn.appendChild(span);
-  btn.classList.add(cls);
-  setTimeout(() => {
-    btn.innerHTML = original;
-    btn.classList.remove(cls);
-  }, 1400);
+  if (btn.classList.contains('cl-cta-btn')) {
+    const labelEl = btn.querySelector('.cl-cta-label');
+    const subEl = btn.querySelector('.cl-cta-sub');
+    const originalLabel = labelEl ? labelEl.textContent : '';
+    const originalSub = subEl ? subEl.textContent : '';
+    const originalSubHidden = subEl ? subEl.hidden : true;
+    if (labelEl) labelEl.textContent = '✓ ' + label;
+    if (subEl) { subEl.textContent = 'Saved to your downloads folder'; subEl.hidden = false; }
+    btn.classList.add(cls);
+    setTimeout(() => {
+      if (labelEl) labelEl.textContent = originalLabel;
+      if (subEl) { subEl.textContent = originalSub; subEl.hidden = originalSubHidden; }
+      btn.classList.remove(cls);
+    }, 1400);
+  } else {
+    const original = btn.textContent;
+    btn.textContent = '✓ ' + label;
+    btn.classList.add(cls);
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.classList.remove(cls);
+    }, 1400);
+  }
 }
 
 async function init() {
@@ -306,10 +321,21 @@ async function init() {
   }
 
   setStatus(statusState, statusText);
-  els.meta.hidden = false;
-  els.words.textContent = formatNumber(result.meta.wordCount);
-  els.chars.textContent = formatNumber(result.meta.charCount);
-  els.tokens.textContent = '~' + formatTokens(result.meta.tokens);
+  // CTA subline: surfaces the only metric most users actually want
+  // (word count) right next to the action that uses it.
+  if (els.ctaSub) {
+    els.ctaSub.hidden = false;
+    els.ctaSub.textContent = formatNumber(result.meta.wordCount) + ' words';
+  }
+  // Full numeric breakdown lives inside the "What was removed" disclosure
+  // — present but not headline.
+  if (els.detailStats) els.detailStats.hidden = false;
+  if (els.words) els.words.textContent = formatNumber(result.meta.wordCount);
+  if (els.chars) els.chars.textContent = formatNumber(result.meta.charCount);
+  if (els.tokens) els.tokens.textContent = '~' + formatTokens(result.meta.tokens);
+  if (els.previewHint) {
+    els.previewHint.textContent = formatNumber(result.meta.wordCount) + ' words · first part of the extraction';
+  }
   els.preview.textContent = result.markdown ? previewText(result.markdown) : '(markdown unavailable — see warning above)';
 
   els.btnMd.disabled = !result.markdown;
@@ -359,7 +385,7 @@ els.btnMd.addEventListener('click', async () => {
   els.btnMd.disabled = true;
   try {
     await downloadText(extracted.markdown, extracted.filenameMd, 'text/markdown');
-    flashButton(els.btnMd, 'Saved ✓');
+    flashButton(els.btnMd, 'Saved');
   } catch (err) {
     showWarning('Download failed: ' + (err && err.message ? err.message : err));
   } finally {
@@ -372,7 +398,7 @@ els.btnJson.addEventListener('click', async () => {
   els.btnJson.disabled = true;
   try {
     await downloadText(extracted.json, extracted.filenameJson, 'application/json');
-    flashButton(els.btnJson, 'Saved ✓');
+    flashButton(els.btnJson, 'Saved');
   } catch (err) {
     showWarning('Download failed: ' + (err && err.message ? err.message : err));
   } finally {
@@ -385,7 +411,7 @@ els.btnCopy.addEventListener('click', async () => {
   els.btnCopy.disabled = true;
   try {
     await navigator.clipboard.writeText(extracted.markdown);
-    flashButton(els.btnCopy, 'Copied ✓');
+    flashButton(els.btnCopy, 'Copied');
   } catch (err) {
     showWarning('Copy failed: ' + (err && err.message ? err.message : err));
   } finally {

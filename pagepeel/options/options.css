@@ -339,11 +339,12 @@ a:hover {
 }
 
 .cl-help-error {
-  color: #c2410c;
+  /* Brand-pink-derived deep wine — replaces former orange #c2410c. */
+  color: #a8245e;
   font-weight: 500;
 }
 @media (prefers-color-scheme: dark) {
-  .cl-help-error { color: #ffa45e; }
+  .cl-help-error { color: #f0a0c0; }
 }
 
 .cl-row-actions {
@@ -355,11 +356,12 @@ a:hover {
 .cl-row-actions .cl-help { flex: 1; min-width: 0; }
 
 .cl-status-dirty {
-  color: #c2410c;
+  /* Same brand-pink-derived wine as the help-error tone. */
+  color: #a8245e;
   font-weight: 600;
 }
 @media (prefers-color-scheme: dark) {
-  .cl-status-dirty { color: #ffa45e; }
+  .cl-status-dirty { color: #f0a0c0; }
 }
 
 .cl-log-region {

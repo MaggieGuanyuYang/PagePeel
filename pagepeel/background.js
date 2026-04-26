@@ -129,9 +129,14 @@ async function setBadgeError(tabId, text) {
 
 async function setBadgeWarn(tabId, text) {
   try {
-    await chrome.action.setBadgeBackgroundColor({ color: '#D97706', tabId });
+    // Brand-pink-derived wine, slightly darker than the success-badge pink
+    // so warn and ok states stay visually distinct without using orange.
+    await chrome.action.setBadgeBackgroundColor({ color: '#A8245E', tabId });
+    await chrome.action.setBadgeTextColor({ color: '#FFFFFF', tabId });
     await chrome.action.setBadgeText({ text: text || '!', tabId });
-  } catch (_e) {}
+  } catch (_e) {
+    try { await chrome.action.setBadgeText({ text: text || '!', tabId }); } catch (_e2) {}
+  }
 }
 
 // Append an entry to the extraction-history ring buffer in chrome.storage.local
