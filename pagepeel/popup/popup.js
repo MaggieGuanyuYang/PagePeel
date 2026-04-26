@@ -338,11 +338,21 @@ async function init() {
   }
 
   setStatus(statusState, statusText);
-  // CTA subline: surfaces the only metric most users actually want
-  // (word count) right next to the action that uses it.
+  // CTA subline: surfaces the word count plus a per-extraction trust
+  // verdict — "ready to save" / "1 thing to check" — at the moment the
+  // user is deciding whether to commit. Implements feedback-on-outcome
+  // (BCT 2.7) directly on the action surface, so the user doesn't have
+  // to expand the "What was removed" disclosure to know whether the
+  // current extraction is clean.
   if (els.ctaSub) {
     els.ctaSub.hidden = false;
-    els.ctaSub.textContent = formatNumber(result.meta.wordCount) + ' words';
+    const wordsLabel = formatNumber(result.meta.wordCount) + ' words';
+    const checkCount = warnings.length;
+    els.ctaSub.textContent = checkCount === 0
+      ? wordsLabel + ' · ready to save'
+      : wordsLabel + (checkCount === 1
+          ? ' · 1 thing to check above'
+          : ' · ' + checkCount + ' things to check above');
   }
   // Full numeric breakdown lives inside the "What was removed" disclosure
   // — present but not headline.
