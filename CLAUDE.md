@@ -74,6 +74,31 @@ case behind it. **Don't relax these without a reproducer.**
 - If asked to "strip more aggressively": say no unless the user provides a
   real page where content survives that shouldn't.
 
+## Pre-strip un-hide step (`pagepeel/content.js:374`)
+
+`unhideHiddenTables(liveBody)` is the **only** intentional live-DOM
+mutation in this file. Runs once just before `gatherHiddenLiveElements`
+and reveals tables locked behind:
+
+1. `.mfp-hide` class (MDPI Magnific Popup containers — references / data
+   tables hide behind it).
+2. Inline `display:none` on a wrapper that contains a `<table>`.
+3. Inline `display:none` on an *ancestor* of a `<table>` (the table is
+   visible itself but a parent wrapper is hidden).
+
+Hard rules:
+
+- **Permanent — no restore.** Record-and-restore would race with site JS
+  that re-asserts display state; researchers batch-extract and move on,
+  so a revealed modal is acceptable.
+- Scope is `display:none` (inline) + `.mfp-hide` only. `visibility:hidden`,
+  `hidden` attribute, `aria-hidden`, `.sr-only`-clipped tables — NOT
+  revealed here; they fall through to the hidden-classification pass.
+- Main document body only. Same-origin iframe contents are inlined into
+  the clone later (`inlineSameOriginIframes`) and miss this pass —
+  extend there only on a real iframe-table reproducer.
+- Don't broaden the scope without a reproducer page.
+
 ## Validated templates — don't break these
 
 Wave 14 verified the strip pipeline against real pages: MRS, Durham (12.7k
@@ -86,7 +111,7 @@ validate any strip-layer change before claiming it's safe.
 ## API and naming
 
 - **In-tab API:** `window.pagepeel.extract(settings)` — defined at
-  `content.js:921`, exposed at `:1242`. Only entry point.
+  `content.js:974`, exposed at `:1301`. Only entry point.
 - **Storage namespace:** `pagepeel:*` keys in `chrome.storage.{local,sync}`
   (`background.js:15`, `:268-286`).
 - **Filename default:** `{title}_{domain}_{date}_{hash}` (`background.js:10`).

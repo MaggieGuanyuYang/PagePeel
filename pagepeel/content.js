@@ -354,6 +354,59 @@
     return hidden;
   }
 
+  // Reveal tables that researchers expect to extract but that sit inside
+  // page-author hide patterns the rest of the pipeline would treat as
+  // hidden chrome:
+  //   1. MDPI articles wrap reference/data tables in `.mfp-hide` modal
+  //      containers (Magnific Popup). The class hides the subtree until a
+  //      "view tables" link is clicked.
+  //   2. University and journal templates frequently put fee or schedule
+  //      tables inside wrappers with inline `style="display:none"`,
+  //      revealed by JS on click.
+  //   3. Some templates leave the table itself visible but hide an
+  //      ancestor wrapper inline — the table is "visible" in isolation
+  //      but invisible in computed style because of the parent.
+  //
+  // Mutates the live DOM and does NOT revert. PagePeel's flow is
+  // extract-and-move-on (researchers batch through pages), so a
+  // permanently-revealed modal is acceptable — record-and-restore would
+  // race with site JS that re-asserts display state. Downstream strip
+  // still drops chrome that matches STRONG_ROOTS, so unwanted modals
+  // don't leak into the markdown output.
+  //
+  // Scope is intentionally narrow:
+  //   - Only `display:none` (inline) and `.mfp-hide`. Other hide hooks
+  //     (`visibility:hidden`, the `hidden` attribute, `aria-hidden`,
+  //     `.sr-only`/clipped tables) are NOT revealed here — they fall
+  //     through to the existing hidden-classification pass.
+  //   - Only the main document body. Tables inside same-origin iframes
+  //     are inlined into the clone later (`inlineSameOriginIframes`)
+  //     and miss this pass; extend there if a real iframe-table
+  //     reproducer surfaces.
+  function unhideHiddenTables(root) {
+    if (!root || typeof root.querySelectorAll !== 'function') return;
+    // Most pages have no tables and no .mfp-hide containers. Skip the three
+    // querySelectorAll passes entirely in that case — querySelector returns
+    // on first match so this short-circuits cheaply.
+    if (!root.querySelector('table') && !root.querySelector('.mfp-hide')) return;
+
+    root.querySelectorAll('.mfp-hide').forEach(el => el.classList.remove('mfp-hide'));
+
+    root.querySelectorAll('[style]').forEach(el => {
+      if (el.style.display === 'none' && el.querySelector('table')) {
+        el.style.display = '';
+      }
+    });
+
+    root.querySelectorAll('table').forEach(table => {
+      let cur = table.parentElement;
+      while (cur) {
+        if (cur.style.display === 'none') cur.style.display = '';
+        cur = cur.parentElement;
+      }
+    });
+  }
+
   // Allowed protocols for <a href>. javascript:/vbscript:/file:/chrome-*: are
   // dropped because the .md output is consumed by LLM pipelines and humans
   // pasting into renderers — both can re-expose javascript: URLs as XSS.
@@ -976,7 +1029,13 @@
       });
     }
 
-    // Compute hidden + keep info from live DOM (read-only — no mutation).
+    // Reveal tables hidden behind MDPI modal classes / inline display:none
+    // wrappers BEFORE the hidden-classification pass below — otherwise
+    // those subtrees are dropped as "hidden chrome".
+    unhideHiddenTables(liveBody);
+
+    // Compute hidden + keep info from live DOM. Read-only apart from the
+    // unhideHiddenTables() pass above.
     const hiddenLiveEntries = gatherHiddenLiveElements(liveBody);
     const hiddenLive = new Set(hiddenLiveEntries.map(h => h.el));
     const hiddenReasonByLive = new Map(hiddenLiveEntries.map(h => [h.el, h.reason]));
