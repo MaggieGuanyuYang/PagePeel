@@ -6,9 +6,13 @@
   "minimum_chrome_version": "114",
   "permissions": [
     "activeTab",
+    "tabs",
     "scripting",
     "storage",
     "downloads"
+  ],
+  "host_permissions": [
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js"
@@ -40,6 +44,13 @@
         "mac": "Alt+Shift+E"
       },
       "description": "Extract current page and download as Markdown"
+    },
+    "extract-all-tabs": {
+      "suggested_key": {
+        "default": "Alt+Shift+A",
+        "mac": "Alt+Shift+A"
+      },
+      "description": "Extract ALL open tabs and download each as Markdown"
     }
   }
 }

@@ -49,6 +49,12 @@ can verify nothing important was stripped.
 folder without opening the popup. Useful when batching through many
 URLs.
 
+**Save all open tabs:** the popup's *Save all open tabs* button
+extracts every eligible tab in the current window and saves each as its
+own file — the one-click version of a long batch. Progress shows in the
+popup (*Saving 7 of 12…*) and each tab's toolbar badge marks its result,
+so you can start it and let it run. Also bound to `Alt+Shift+A`.
+
 **Filename pattern:** the default is
 `{title}_{domain}_{date}_{hash}.md` — the 6-character hash is a
 short URL fingerprint that prevents two pages with similar titles from
@@ -83,11 +89,14 @@ entirely in your browser. Settings sync to your Google account via
 PagePeel-specific). Extraction history is stored locally only
 (`chrome.storage.local`) and never leaves your device.
 
-Permissions requested: `activeTab` (read the current page when you
-click), `scripting` (inject the extraction code into that tab),
-`storage` (save your settings + history), `downloads` (save the
-generated file). No `tabs`, no `host_permissions`, no `cookies`, no
-`webRequest`.
+Permissions requested: `activeTab` + `tabs` (read the page you're on,
+plus the other tabs in the window for *Save all open tabs*),
+`host_permissions` (`<all_urls>`, so the extractor can run on whichever
+open pages you choose to save), `scripting` (inject the extraction
+code), `storage` (save your settings + history), `downloads` (save the
+generated files). No `cookies`, no `webRequest` — and, as above, no
+network calls of any kind: the broad host access is used only to read
+pages you already have open, never to fetch anything.
 
 ## Workflow it was built for
 
@@ -111,7 +120,7 @@ validation criteria.
 `pagepeel/manifest.json` declares an MV3 service worker
 (`pagepeel/background.js`), a popup (`pagepeel/popup/`), an options
 page (`pagepeel/options/`), and a content script (`pagepeel/content.js`)
-that's injected on demand into the active tab. The content script
+that's injected on demand into each tab you extract. The content script
 clones `document.body`, strips boilerplate via a token-prefix matcher
 plus an accordion-aware hidden-element pass, inlines same-origin
 iframes and open shadow roots, then runs Turndown for Markdown and a

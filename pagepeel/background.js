@@ -160,7 +160,7 @@ async function appendToLog(entry) {
 function buildLogEntry(tab, source, settings, result) {
   return {
     ts: new Date().toISOString(),
-    source, // 'shortcut' | 'popup'
+    source, // 'shortcut' | 'batch' (popup builds its own log entry inline)
     tabId: tab && tab.id,
     url: tab && tab.url,
     title: result && result.meta && result.meta.title,
@@ -252,9 +252,133 @@ async function handleShortcut() {
   await appendToLog(buildLogEntry(tab, 'shortcut', settings, result));
 }
 
+// Only one batch run at a time. Both the keyboard shortcut and the popup
+// button funnel through startBatch(), which claims this lock; a second
+// trigger while a run is active is rejected with reason 'busy'.
+let batchInFlight = false;
+
+async function collectExtractableTabs() {
+  const tabs = await chrome.tabs.query({ currentWindow: true });
+  return tabs.filter(t => !isRestricted(t.url));
+}
+
+// Broadcast batch progress to the popup. chrome.runtime.sendMessage rejects
+// with "Receiving end does not exist" when the popup is closed — that's the
+// normal headless case (the batch keeps running regardless), so swallow it.
+function emitBatchEvent(message) {
+  try {
+    const p = chrome.runtime.sendMessage(message);
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  } catch (_e) {}
+}
+
+async function runBatchLoop(extractable) {
+  const settings = await getSettings();
+  const total = extractable.length;
+  let succeeded = 0;
+  let failed = 0;
+  let done = 0;
+
+  for (const tab of extractable) {
+    try {
+      await setBadge(tab.id, '…');
+      const result = await runExtractionInTab(tab.id, settings);
+
+      if (!result || result.error) {
+        await setBadgeError(tab.id, 'ERR');
+        await appendToLog(buildLogEntry(tab, 'batch', settings, result || { error: 'no-result' }));
+        failed++;
+      } else if (result.meta.readyState && result.meta.readyState !== 'complete') {
+        await setBadgeWarn(tab.id, 'WAIT');
+        await appendToLog(buildLogEntry(tab, 'batch', settings, Object.assign({}, result, { error: 'page-not-ready' })));
+        failed++;
+      } else {
+        let wroteAny = false;
+        if (settings.outputFormat === 'json' || settings.outputFormat === 'both') {
+          if (result.json) {
+            await downloadText(result.json, result.filenameJson, 'application/json');
+            wroteAny = true;
+          }
+        }
+        if (settings.outputFormat === 'markdown' || settings.outputFormat === 'both') {
+          if (result.markdown) {
+            await downloadText(result.markdown, result.filenameMd, 'text/markdown');
+            wroteAny = true;
+          }
+        }
+
+        if (wroteAny) {
+          // Use the token-count badge (not a bare ✓) so the per-tab marker is
+          // informative AND auto-clears on tab switch via onActivated below —
+          // matching the single-tab path. A sticky ✓ on every tab after a
+          // large batch is just clutter. Failures keep ERR/WAIT (sticky).
+          await setBadge(tab.id, result.meta.tokenBadge || '✓');
+          succeeded++;
+        } else {
+          await setBadgeError(tab.id, 'ERR');
+          failed++;
+        }
+        await appendToLog(buildLogEntry(tab, 'batch', settings, result));
+      }
+    } catch (err) {
+      console.warn('PagePeel batch: tab failed', tab.url, err);
+      await setBadgeError(tab.id, 'ERR');
+      await appendToLog({
+        ts: new Date().toISOString(), source: 'batch',
+        tabId: tab.id, url: tab.url, ok: false, error: String(err && err.message || err)
+      });
+      failed++;
+    }
+    done++;
+    emitBatchEvent({ type: 'pagepeel:batchProgress', done, total, succeeded, failed });
+  }
+
+  emitBatchEvent({ type: 'pagepeel:batchDone', total, succeeded, failed });
+  console.log(`PagePeel batch complete: ${succeeded} succeeded, ${failed} failed out of ${total} tabs`);
+  return { total, succeeded, failed };
+}
+
+// Shared entry point for the keyboard shortcut and the popup button. The
+// guard check and the lock assignment span no await, so two near-simultaneous
+// triggers cannot both pass. The loop is started without awaiting it so the
+// caller gets an immediate ack carrying the tab count for live progress.
+async function startBatch() {
+  if (batchInFlight) return { ok: false, reason: 'busy' };
+  batchInFlight = true;
+  let extractable;
+  try {
+    extractable = await collectExtractableTabs();
+  } catch (_err) {
+    batchInFlight = false;
+    return { ok: false, reason: 'query-failed' };
+  }
+  if (!extractable.length) {
+    batchInFlight = false;
+    return { ok: false, reason: 'no-tabs' };
+  }
+  runBatchLoop(extractable)
+    .catch((err) => {
+      // The only await outside runBatchLoop's per-tab try/catch is getSettings();
+      // if it rejects the loop ends before emitting anything. Send a terminal
+      // event so an open popup recovers instead of hanging on "Saving 0 of N…".
+      console.warn('PagePeel batch loop crashed:', err);
+      emitBatchEvent({ type: 'pagepeel:batchDone', total: extractable.length, succeeded: 0, failed: extractable.length });
+    })
+    .finally(() => { batchInFlight = false; });
+  return { ok: true, total: extractable.length };
+}
+
+async function handleBatchExtract() {
+  const ack = await startBatch();
+  if (!ack.ok) console.warn('PagePeel batch (shortcut) not started:', ack.reason);
+}
+
 chrome.commands.onCommand.addListener((command) => {
   if (command === 'extract-and-download') {
     handleShortcut();
+  }
+  if (command === 'extract-all-tabs') {
+    handleBatchExtract();
   }
 });
 
@@ -265,6 +389,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // are received via onMessageExternal, which we don't register.
   if (sender && sender.id && sender.id !== chrome.runtime.id) return;
 
+  if (msg.type === 'pagepeel:batchExtract') {
+    // Ack resolves with { ok, total } once the run has started (or a reason
+    // why it didn't); progress then streams back via pagepeel:batchProgress.
+    startBatch().then(sendResponse);
+    return true;
+  }
   if (msg.type === 'pagepeel:setBadge') {
     // Only allow the sender's own tab to be badged; ignore arbitrary tabId.
     const tabId = (sender.tab && sender.tab.id) || msg.tabId;

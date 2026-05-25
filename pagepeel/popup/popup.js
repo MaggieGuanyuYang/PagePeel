@@ -59,6 +59,8 @@ const els = {
   btnMd: $('btn-md'),
   btnJson: $('btn-json'),
   btnCopy: $('btn-copy'),
+  btnBatch: $('btn-batch'),
+  batchSub: $('batch-sub'),
   openOptions: $('open-options'),
   shortcutLink: $('shortcut-link'),
   strippedDisclosure: $('stripped-disclosure'),
@@ -458,6 +460,52 @@ async function init() {
   });
 }
 
+// Plain-language summary of what the button will do, leading with the count so
+// a large batch (e.g. 150 tabs) reads as the weighty action it is rather than
+// burying the number. Matches the active output format. (No "format"/"export"
+// jargon — the audience is researchers, not developers.)
+function batchSubText(count, outputFormat) {
+  const each = outputFormat === 'json' ? 'one JSON file each'
+    : outputFormat === 'both' ? 'Markdown + JSON each'
+    : 'one Markdown file each';
+  const tabs = count === 1 ? '1 open tab' : 'all ' + count + ' open tabs';
+  return 'Saves ' + tabs + ' — ' + each;
+}
+
+// "Save all open tabs" is wired independently of the active-tab extraction so
+// it still works when the active tab is a restricted page — other tabs in the
+// window may well be saveable. The actual batch loop runs in the background
+// service worker (shared with the Alt+Shift+A shortcut); this only counts the
+// tabs up front and renders progress streamed back from there.
+async function initBatch() {
+  if (!els.btnBatch) return;
+  let extractableCount = 0;
+  let settings;
+  try {
+    const [tabs, s] = await Promise.all([
+      chrome.tabs.query({ currentWindow: true }),
+      getSettings()
+    ]);
+    settings = s;
+    extractableCount = tabs.filter(t => !isRestricted(t.url)).length;
+  } catch (_e) {
+    extractableCount = 0;
+  }
+
+  if (!extractableCount) {
+    els.btnBatch.disabled = true;
+    els.btnBatch.title = 'No open tabs can be saved — browser-internal pages are skipped.';
+    if (els.batchSub) els.batchSub.textContent = 'No open tabs can be saved';
+    return;
+  }
+
+  if (els.batchSub) {
+    els.batchSub.textContent = batchSubText(extractableCount, settings ? settings.outputFormat : 'markdown');
+  }
+  els.btnBatch.disabled = false;
+  els.btnBatch.title = '';
+}
+
 els.btnMd.addEventListener('click', async () => {
   if (!extracted) return;
   els.btnMd.disabled = true;
@@ -508,4 +556,56 @@ if (els.shortcutLink) {
   });
 }
 
+if (els.btnBatch) {
+  els.btnBatch.addEventListener('click', async () => {
+    if (els.btnBatch.disabled) return;
+    els.btnBatch.disabled = true;
+    els.btnBatch.dataset.state = 'running';
+    if (els.batchSub) els.batchSub.textContent = 'Starting…';
+
+    let ack;
+    try {
+      ack = await chrome.runtime.sendMessage({ type: 'pagepeel:batchExtract' });
+    } catch (_err) {
+      delete els.btnBatch.dataset.state;
+      els.btnBatch.disabled = false;
+      if (els.batchSub) els.batchSub.textContent = 'Couldn’t start — try again';
+      return;
+    }
+
+    if (!ack || !ack.ok) {
+      delete els.btnBatch.dataset.state;
+      els.btnBatch.disabled = false;
+      const reason = ack && ack.reason;
+      if (els.batchSub) {
+        els.batchSub.textContent = reason === 'busy' ? 'A save-all is already running'
+          : reason === 'no-tabs' ? 'No open tabs can be saved'
+          : 'Couldn’t start — try again';
+      }
+      return;
+    }
+    // Started — the background streams progress back via runtime messages.
+    if (els.batchSub) els.batchSub.textContent = 'Saving 0 of ' + ack.total + '…';
+  });
+}
+
+// Live batch progress from the background service worker. These only arrive
+// while the popup is open; if it's closed the batch keeps running headless
+// (per-tab toolbar badges + the extraction log record the outcome).
+chrome.runtime.onMessage.addListener((msg) => {
+  if (!msg || !msg.type || !els.btnBatch) return;
+  if (msg.type === 'pagepeel:batchProgress') {
+    if (els.batchSub) els.batchSub.textContent = 'Saving ' + msg.done + ' of ' + msg.total + '…';
+  } else if (msg.type === 'pagepeel:batchDone') {
+    els.btnBatch.disabled = false;
+    els.btnBatch.dataset.state = 'done';
+    if (els.batchSub) {
+      let text = 'Saved ' + msg.succeeded + ' of ' + msg.total;
+      if (msg.failed) text += ' · ' + msg.failed + ' couldn’t be saved';
+      els.batchSub.textContent = text;
+    }
+  }
+});
+
 init();
+initBatch();

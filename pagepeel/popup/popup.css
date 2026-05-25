@@ -311,6 +311,91 @@ body[data-state="loading"] { border-left-color: var(--accent); }
 }
 
 /* ============================================================
+   BATCH ACTION — "Save all open tabs"
+   Full-width but visually subordinate to the pink primary CTA:
+   a teal-keyed outline button so the two don't compete. Carries
+   its own progress subline ("Saving 3 of 12…"). No orange.
+   ============================================================ */
+.cl-batch {
+  padding: 0 16px 14px 16px;
+}
+.cl-batch-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 50px;
+  padding: 9px 16px;
+  text-align: left;
+  background: var(--bg-soft);
+  color: var(--fg);
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 110ms ease, border-color 110ms ease, transform 90ms ease;
+}
+.cl-batch-btn:hover:not(:disabled) {
+  background: var(--teal-soft);
+  border-color: var(--accent-edge);
+  transform: translateY(-1px);
+}
+.cl-batch-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+.cl-batch-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.cl-batch-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.cl-batch-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--teal-soft);
+  color: var(--teal-deep);
+  flex-shrink: 0;
+}
+.cl-batch-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.2;
+  gap: 2px;
+  min-width: 0;
+}
+.cl-batch-label {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+}
+.cl-batch-sub {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+/* Running — pulse the icon to signal the headless batch is working even
+   if the user clicks away and reopens. */
+.cl-batch-btn[data-state="running"] .cl-batch-icon {
+  animation: cl-pulse 1.1s ease-in-out infinite;
+}
+/* Done — teal-green keyline + tinted icon (success tone, never orange). */
+.cl-batch-btn[data-state="done"] {
+  border-color: var(--success);
+}
+.cl-batch-btn[data-state="done"] .cl-batch-icon {
+  background: var(--teal-soft);
+  color: var(--success);
+}
+
+/* ============================================================
    WARNING / ERROR PANELS
    Pink-toned warn (no orange anywhere). Error keeps its
    recognised red tone — universally read as failure.
