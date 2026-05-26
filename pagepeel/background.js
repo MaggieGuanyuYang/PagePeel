@@ -151,44 +151,18 @@ async function ensureTabAwake(tabId) {
   return false;
 }
 
-// Revoke the blob URL when the download completes (or fails). The previous
-// 60-second setTimeout would never fire if the MV3 service worker idled out
-// at 30s, leaking blob URLs across the SW lifetime.
-function revokeOnDownloadComplete(downloadId, blobUrl) {
-  const onChange = (delta) => {
-    if (delta.id !== downloadId) return;
-    if (!delta.state) return;
-    const state = delta.state.current;
-    if (state === 'complete' || state === 'interrupted') {
-      try { URL.revokeObjectURL(blobUrl); } catch (_e) {}
-      try { chrome.downloads.onChanged.removeListener(onChange); } catch (_e) {}
-    }
-  };
-  try {
-    chrome.downloads.onChanged.addListener(onChange);
-  } catch (_e) {
-    try { URL.revokeObjectURL(blobUrl); } catch (_e2) {}
-    return;
-  }
-  // Fallback in case onChanged never fires (rare but possible if Chrome
-  // closes mid-download). 30s is short enough to land before SW idle-out.
-  setTimeout(() => {
-    try { chrome.downloads.onChanged.removeListener(onChange); } catch (_e) {}
-    try { URL.revokeObjectURL(blobUrl); } catch (_e) {}
-  }, 30_000);
-}
-
+// MV3 service workers do not have URL.createObjectURL — it only exists in
+// window contexts (the popup has its own downloadText that still uses blobs).
+// Encode content as a data URI instead: TextEncoder → UTF-8 bytes → base64.
+// Works for the text content PagePeel produces (Markdown, JSON). Practical
+// size limit ~2 MB per data URI; a 400 000-word markdown would be needed to
+// hit that, well beyond any single course page.
 async function downloadText(text, filename, mime) {
-  const blob = new Blob([text], { type: mime + ';charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  let id;
-  try {
-    id = await chrome.downloads.download({ url, filename, saveAs: false, conflictAction: 'uniquify' });
-  } catch (e) {
-    try { URL.revokeObjectURL(url); } catch (_e) {}
-    throw e;
-  }
-  revokeOnDownloadComplete(id, url);
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  const url = 'data:' + mime + ';charset=utf-8;base64,' + btoa(binary);
+  const id = await chrome.downloads.download({ url, filename, saveAs: false, conflictAction: 'uniquify' });
   return id;
 }
 
