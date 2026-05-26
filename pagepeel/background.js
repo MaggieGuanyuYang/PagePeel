@@ -15,6 +15,15 @@ const RESTRICTED_PROTOCOLS = ['chrome:', 'chrome-extension:', 'edge:', 'about:',
 const LOG_KEY = 'pagepeel:extractionLog';
 const LOG_CAP = 500;
 
+// Per-tab caps for batch extraction. EXTRACT_TIMEOUT_MS bounds a single tab's
+// extraction so one hung page can't stall the whole run (and freeze the popup);
+// LOAD_WAIT_MS bounds how long we wait for a woken/loading tab to finish before
+// extracting anyway. Both are generous for real pages but fail fast on a stuck
+// one. (Chrome's 5-min cap is per API call, not per loop, so these are about UX
+// and progress, not service-worker survival.)
+const EXTRACT_TIMEOUT_MS = 20000;
+const LOAD_WAIT_MS = 15000;
+
 function isRestricted(url) {
   if (!url) return true;
   try {
@@ -69,6 +78,77 @@ async function runExtractionInTab(tabId, settings) {
     args: [settings]
   });
   return result;
+}
+
+// Reject `promise` if it hasn't settled within `ms`. Used so a single hung tab
+// (an executeScript that never resolves) fails fast instead of stalling the
+// whole batch. The underlying promise is left to settle on its own — we can't
+// cancel executeScript — but its result is ignored after the timeout.
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error((label || 'operation') + ' timed out after ' + ms + 'ms')), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+// Resolve once tab `tabId` reports status 'complete', or after `timeoutMs`
+// (best-effort — never rejects). Handles the case where 'complete' already
+// fired before we attached the listener via an immediate chrome.tabs.get check.
+function waitForTabComplete(tabId, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      try { chrome.tabs.onUpdated.removeListener(onUpdated); } catch (_e) {}
+      clearTimeout(timer);
+      resolve();
+    };
+    const onUpdated = (id, changeInfo) => {
+      if (id === tabId && changeInfo && changeInfo.status === 'complete') finish();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    try {
+      chrome.tabs.onUpdated.addListener(onUpdated);
+    } catch (_e) { finish(); return; }
+    chrome.tabs.get(tabId).then((t) => {
+      if (t && t.status === 'complete') finish();
+    }).catch(() => {});
+  });
+}
+
+// Memory Saver discards background tabs once many are open; a discarded tab's
+// DOM is gone until reloaded, and executeScript on it has no guarantee of
+// running against the finished document. So wake + wait for load before
+// extracting. Only *discarded* tabs are reloaded — their live state was already
+// evicted by Chrome, so the reload loses nothing the user could still see;
+// merely-loading tabs are waited on without a reload. Bounded by LOAD_WAIT_MS;
+// on timeout we extract anyway and the page-not-ready gate in runBatchLoop
+// catches a still-loading page rather than saving a half-rendered snapshot.
+// Returns true if it reloaded a discarded tab (the caller re-asserts the
+// in-progress badge in that case, since the reload navigation can trip the
+// badge-clear listener).
+async function ensureTabAwake(tabId) {
+  let t;
+  try {
+    t = await chrome.tabs.get(tabId);
+  } catch (_e) {
+    return false; // tab vanished mid-run; the extraction attempt will fail and be logged
+  }
+  if (!t) return false;
+  if (t.discarded) {
+    let reloaded = false;
+    try { await chrome.tabs.reload(tabId); reloaded = true; } catch (_e) {}
+    // Only wait if the reload actually started — otherwise no 'complete' is
+    // coming and we'd dead-wait the full LOAD_WAIT_MS for nothing.
+    if (reloaded) await waitForTabComplete(tabId, LOAD_WAIT_MS);
+    return reloaded;
+  }
+  if (t.status && t.status !== 'complete') {
+    await waitForTabComplete(tabId, LOAD_WAIT_MS);
+  }
+  return false;
 }
 
 // Revoke the blob URL when the download completes (or fails). The previous
@@ -272,65 +352,92 @@ function emitBatchEvent(message) {
   } catch (_e) {}
 }
 
+// Extract + download a single tab. Returns 'ok' | 'failed' | 'not-ready'.
+// 'not-ready' means the page hadn't finished loading (a just-woken discarded
+// tab on a slow server is the usual cause); runBatchLoop gives those one more
+// try at the end rather than dropping them.
+async function processTab(tab, settings) {
+  try {
+    await setBadge(tab.id, '…');
+    const woke = await ensureTabAwake(tab.id);
+    // Waking a discarded tab navigates it, which can clear the in-progress
+    // badge via the onUpdated listener below — re-assert it after the wake.
+    if (woke) await setBadge(tab.id, '…');
+    const result = await withTimeout(runExtractionInTab(tab.id, settings), EXTRACT_TIMEOUT_MS, 'extraction');
+
+    if (!result || result.error) {
+      await setBadgeError(tab.id, 'ERR');
+      await appendToLog(buildLogEntry(tab, 'batch', settings, result || { error: 'no-result' }));
+      return 'failed';
+    }
+    if (result.meta.readyState && result.meta.readyState !== 'complete') {
+      await setBadgeWarn(tab.id, 'WAIT');
+      await appendToLog(buildLogEntry(tab, 'batch', settings, Object.assign({}, result, { error: 'page-not-ready' })));
+      return 'not-ready';
+    }
+
+    let wroteAny = false;
+    if (settings.outputFormat === 'json' || settings.outputFormat === 'both') {
+      if (result.json) {
+        await downloadText(result.json, result.filenameJson, 'application/json');
+        wroteAny = true;
+      }
+    }
+    if (settings.outputFormat === 'markdown' || settings.outputFormat === 'both') {
+      if (result.markdown) {
+        await downloadText(result.markdown, result.filenameMd, 'text/markdown');
+        wroteAny = true;
+      }
+    }
+
+    if (wroteAny) {
+      // Token-count badge (not a bare ✓) so the marker is informative AND
+      // auto-clears on tab switch via onActivated below, matching the
+      // single-tab path. Failures keep ERR/WAIT (sticky) so they stay visible.
+      await setBadge(tab.id, result.meta.tokenBadge || '✓');
+    } else {
+      await setBadgeError(tab.id, 'ERR');
+    }
+    await appendToLog(buildLogEntry(tab, 'batch', settings, result));
+    return wroteAny ? 'ok' : 'failed';
+  } catch (err) {
+    console.warn('PagePeel batch: tab failed', tab.url, err);
+    await setBadgeError(tab.id, 'ERR');
+    await appendToLog({
+      ts: new Date().toISOString(), source: 'batch',
+      tabId: tab.id, url: tab.url, ok: false, error: String(err && err.message || err)
+    });
+    return 'failed';
+  }
+}
+
 async function runBatchLoop(extractable) {
   const settings = await getSettings();
   const total = extractable.length;
   let succeeded = 0;
   let failed = 0;
   let done = 0;
+  const retry = [];
 
   for (const tab of extractable) {
-    try {
-      await setBadge(tab.id, '…');
-      const result = await runExtractionInTab(tab.id, settings);
-
-      if (!result || result.error) {
-        await setBadgeError(tab.id, 'ERR');
-        await appendToLog(buildLogEntry(tab, 'batch', settings, result || { error: 'no-result' }));
-        failed++;
-      } else if (result.meta.readyState && result.meta.readyState !== 'complete') {
-        await setBadgeWarn(tab.id, 'WAIT');
-        await appendToLog(buildLogEntry(tab, 'batch', settings, Object.assign({}, result, { error: 'page-not-ready' })));
-        failed++;
-      } else {
-        let wroteAny = false;
-        if (settings.outputFormat === 'json' || settings.outputFormat === 'both') {
-          if (result.json) {
-            await downloadText(result.json, result.filenameJson, 'application/json');
-            wroteAny = true;
-          }
-        }
-        if (settings.outputFormat === 'markdown' || settings.outputFormat === 'both') {
-          if (result.markdown) {
-            await downloadText(result.markdown, result.filenameMd, 'text/markdown');
-            wroteAny = true;
-          }
-        }
-
-        if (wroteAny) {
-          // Use the token-count badge (not a bare ✓) so the per-tab marker is
-          // informative AND auto-clears on tab switch via onActivated below —
-          // matching the single-tab path. A sticky ✓ on every tab after a
-          // large batch is just clutter. Failures keep ERR/WAIT (sticky).
-          await setBadge(tab.id, result.meta.tokenBadge || '✓');
-          succeeded++;
-        } else {
-          await setBadgeError(tab.id, 'ERR');
-          failed++;
-        }
-        await appendToLog(buildLogEntry(tab, 'batch', settings, result));
-      }
-    } catch (err) {
-      console.warn('PagePeel batch: tab failed', tab.url, err);
-      await setBadgeError(tab.id, 'ERR');
-      await appendToLog({
-        ts: new Date().toISOString(), source: 'batch',
-        tabId: tab.id, url: tab.url, ok: false, error: String(err && err.message || err)
-      });
-      failed++;
-    }
+    const outcome = await processTab(tab, settings);
+    if (outcome === 'ok') succeeded++;
+    else if (outcome === 'not-ready') retry.push(tab);
+    else failed++;
     done++;
     emitBatchEvent({ type: 'pagepeel:batchProgress', done, total, succeeded, failed });
+  }
+
+  // One retry pass for tabs that were still loading when first reached: by now
+  // the rest of the batch has given a slow-waking tab time to finish, so a
+  // second extraction usually succeeds. This avoids forcing a full re-run to
+  // recover them — which would re-download every earlier success as a
+  // uniquified duplicate. Bounded: each tab is retried at most once; one still
+  // not ready is finally counted failed. No progress events — done == total.
+  for (const tab of retry) {
+    const outcome = await processTab(tab, settings);
+    if (outcome === 'ok') succeeded++;
+    else failed++;
   }
 
   emitBatchEvent({ type: 'pagepeel:batchDone', total, succeeded, failed });

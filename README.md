@@ -53,7 +53,10 @@ URLs.
 extracts every eligible tab in the current window and saves each as its
 own file — the one-click version of a long batch. Progress shows in the
 popup (*Saving 7 of 12…*) and each tab's toolbar badge marks its result,
-so you can start it and let it run. Also bound to `Alt+Shift+A`.
+so you can start it and let it run. Tabs that Chrome has put to sleep in
+the background (Memory Saver, common when many tabs are open) are woken
+and reloaded automatically so they're captured too — so a big batch may
+reload some tabs and take a little while. Also bound to `Alt+Shift+A`.
 
 **Filename pattern:** the default is
 `{title}_{domain}_{date}_{hash}.md` — the 6-character hash is a
